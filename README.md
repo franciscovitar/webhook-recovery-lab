@@ -72,7 +72,7 @@ npm run demo:scenario -- --run-id local-001
 
 The script binds real API and receiver HTTP listeners to ephemeral loopback ports, uses both PostgreSQL test databases and prints a fixed transcript for signed ingress, duplicate/conflict, 503 retries, a simulated crash before ACK, and a dead-letter/replay cycle. It refuses non-local or non-test database names and rejects repeated run IDs before writing. It does **not** start or verify the multi-container Compose demo. Use a new run ID for subsequent runs or recreate the disposable test stack.
 
-The pull-request workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) uses Node 24 and PostgreSQL 17, runs migrations, checks static analysis, executes unit/integration suites, rejects skipped or missing cases from machine-readable reports, and invokes the HTTP demo. A workflow file alone is not evidence: inspect the actual commit-linked GitHub Actions run and logs for results.
+The pull-request workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) uses Node 24 and PostgreSQL 17, runs migrations, checks static analysis, executes unit/integration suites, rejects skipped or missing cases from machine-readable reports, and invokes the HTTP demo. It also builds and starts the five-service demo Compose stack under a unique CI project name, sends a signed webhook to the containerized API and verifies the worker's durable success and receiver's single receipt against both databases. It collects Compose logs on failure and stops only the uniquely named CI stack without deleting volumes. A workflow file alone is not evidence: inspect the actual commit-linked GitHub Actions run and logs for results.
 
 ## Technical decisions
 

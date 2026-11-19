@@ -73,3 +73,27 @@ jobs:
 
       - name: End-to-end recovery demo over real HTTP and two databases
         run: npm run demo:scenario -- --run-id ci
+
+      - name: Build and start isolated Compose stack
+        env:
+          COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker compose up --build -d db migrate api receiver worker
+
+      - name: Check containerized HTTP and durable delivery
+        env:
+          COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ci/check-compose-smoke.mjs
+
+      - name: Capture Compose diagnostics on failure
+        if: failure()
+        env:
+          COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          docker compose ps
+          docker compose logs --no-color --tail 120
+
+      - name: Stop only this CI Compose stack
+        if: always()
+        env:
+          COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker compose down --remove-orphans
