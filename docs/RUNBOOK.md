@@ -33,6 +33,6 @@ If a worker stops while its job is `LEASED`, the lease expires and another worke
 ## Safety
 
 - Use only local Docker Compose and synthetic secrets.
-- Never run integration tests against the demo `gateway_db` or any client DB; the suite explicitly accepts only `gateway_test*` and `receiver_test*` database names.
+- Never run integration tests against the demo `gateway_db` or any client DB; the suite accepts only the exact local `gateway_test` and `receiver_test` names, with no URL overrides.
 - Never delete named volumes or reset Docker Desktop to clear test data. `docker compose -f compose.test.yaml down` removes the disposable test container; do not use it against unrelated projects.
 - This runbook is not incident-management certification, an SLO or a production SLA.

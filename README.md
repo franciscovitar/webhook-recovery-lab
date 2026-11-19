@@ -14,7 +14,7 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 - SQL migration with named database constraints, unit tests and PostgreSQL integration tests (the latter **require a running database** and never silently skip).
 - Separate worker process with short `SKIP LOCKED` claims, 15-second leases, fencing token, capped retry/backoff, dead-letter state and audited replay generations.
 - Synthetic receiver with a separate `receiver_db`, stable `delivery_id`, idempotent receipts, local fault-plan CLI and explicit attempt counters.
-- Runbook and architecture decisions in [docs](docs/DECISIONS.md), read-only operational snapshots in [observability](docs/OBSERVABILITY.md), and the [engineering case study](docs/CASE_STUDY.md).
+- Runbook and architecture decisions in [docs](docs/DECISIONS.md), read-only operational snapshots in [observability](docs/OBSERVABILITY.md), the [engineering case study](docs/CASE_STUDY.md), and the [architecture/security review](docs/SECURITY_REVIEW.md).
 
 **Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
 
@@ -58,9 +58,9 @@ npm run test:integration
 docker compose -f compose.test.yaml down
 ```
 
-The integration suite fails if either test URL is missing, not isolated, or PostgreSQL is unreachable. These commands require Docker. Passing unit tests alone does not verify transactions, SQL constraints or concurrency; the integration results above come from running exactly these commands. A test failure should be investigated before any claim of recovery or correctness.
+The integration suite fails if either test URL is missing, not isolated, or PostgreSQL is unreachable. Mutable tests require the **exact** `gateway_test` and `receiver_test` names on a loopback host, without connection-string query or fragment overrides. These commands require Docker. Passing unit tests alone does not verify transactions, SQL constraints or concurrency; the integration results above come from running exactly these commands. A test failure should be investigated before any claim of recovery or correctness.
 
-On Windows with `core.autocrlf=true`, `npm run format:check` reports every file because the working tree is CRLF while Prettier expects LF; this is a checkout artifact (use `npx prettier --check . --end-of-line crlf` locally to confirm).
+The repository declares LF line endings in `.gitattributes`. Older Windows checkouts with `core.autocrlf=true` may still have a CRLF working tree: `npx prettier --check . --end-of-line crlf` can diagnose that checkout artifact. Do not reformat unrelated changes to fix it.
 
 ## Repeatable recovery demo and CI
 
@@ -80,7 +80,11 @@ Run `npm run ops:snapshot` with `DATABASE_URL` (and optionally `RECEIVER_DATABAS
 
 PR CI also runs a **bounded functional probe** of 40 synthetic events at concurrency 8 against the full Compose stack. It checks that every accepted event produces a durable succeeded job and exactly one receiver receipt. It prints observed ingress p50/p95 and throughput for that single CI runner, with **no claimed SLO, capacity estimate or load-test certification**. The [case study](docs/CASE_STUDY.md) separates measured evidence from architectural claims.
 
-**Prior CI evidence:** [run #44534829515](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44534829515) verified 25 unit and 11 integration tests (0 skipped), a scripted HTTP recovery scenario and full Compose smoke. Newer snapshot and probe code requires its own commit-linked run for verification.
+**Prior CI evidence:** [run #44536380766](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44536380766) verified 25 unit and 13 PostgreSQL integration tests (0 skipped), scripted recovery, full Compose smoke, a 40-event bounded functional probe and read-only queue diagnostics. Newly added security/rollback tests require their own commit-linked run.
+
+## Security review and exposure boundary
+
+See [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) for the explicit trust boundaries and the production-exposure gates. The review hardens the integration test database guard and adds an automated PostgreSQL rollback fault test. This remains a **synthetic, local-only laboratory**: do not publicly deploy it with the demo keys, lack of rate limiting, and no external TLS/secret-management plan. A green CI run is not a vulnerability scan or production certification.
 
 ## Technical decisions
 

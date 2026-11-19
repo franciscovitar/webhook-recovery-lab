@@ -134,4 +134,60 @@ describe('real PostgreSQL ingress', () => {
     );
     expect(count.rows[0]?.count).toBe('1');
   });
+
+  it('rolls back inbox and releases its identity if creating the job fails', async () => {
+    const eventId = randomUUID();
+    createdEventIds.push(eventId);
+    const payload = eventPayload(eventId, 'ord_rollback');
+    // The trigger is restricted to this synthetic event and is removed in
+    // finally. The test never changes any demo/client database.
+    const triggerName = `wrl_test_reject_${eventId.replaceAll('-', '').slice(0, 16)}`;
+    await pool.query(
+      `CREATE FUNCTION ${triggerName}() RETURNS trigger LANGUAGE plpgsql AS $$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM inbox_events
+                     WHERE id = NEW.inbox_event_id AND event_id = '${eventId}'::uuid) THEN
+           RAISE EXCEPTION 'synthetic job insert rejection';
+         END IF;
+         RETURN NEW;
+       END; $$`,
+    );
+    try {
+      await pool.query(
+        `CREATE TRIGGER ${triggerName}_trigger BEFORE INSERT ON delivery_jobs
+           FOR EACH ROW EXECUTE FUNCTION ${triggerName}()`,
+      );
+      const failure = await app.inject({
+        method: 'POST',
+        url: '/v1/webhooks/sandbox',
+        payload,
+        headers: signed(payload),
+      });
+      expect(failure.statusCode).toBe(503);
+      const count = await pool.query<{ count: string }>(
+        'SELECT COUNT(*)::text count FROM inbox_events WHERE event_id=$1',
+        [eventId],
+      );
+      expect(count.rows[0]?.count).toBe('0');
+    } finally {
+      await pool.query(`DROP TRIGGER IF EXISTS ${triggerName}_trigger ON delivery_jobs`);
+      await pool.query(`DROP FUNCTION IF EXISTS ${triggerName}()`);
+    }
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: '/v1/webhooks/sandbox',
+      payload,
+      headers: signed(payload),
+    });
+    expect(retried.statusCode).toBe(202);
+    expect(retried.json().status).toBe('accepted');
+    const counts = await pool.query<{ events: string; jobs: string }>(
+      `SELECT (SELECT COUNT(*) FROM inbox_events WHERE event_id=$1)::text events,
+              (SELECT COUNT(*) FROM delivery_jobs WHERE inbox_event_id IN
+                (SELECT id FROM inbox_events WHERE event_id=$1))::text jobs`,
+      [eventId],
+    );
+    expect(counts.rows[0]).toEqual({ events: '1', jobs: '1' });
+  });
 });

@@ -48,6 +48,7 @@ flowchart TD
 | ------------------------------------- | ------------------------------------------------- | ----------------------------------------- |
 | 20 simultaneous identical webhooks    | One inbox row and one job                         | PostgreSQL integration tests              |
 | Same event ID, changed signed body    | Conflict `409`; no second job                     | HTTP and database assertions              |
+| Job insert fails after inbox insert   | Whole transaction rolls back; retry can succeed   | Injected PostgreSQL trigger test          |
 | Six workers competing                 | Only one claim wins                               | Real concurrent PostgreSQL connections    |
 | Receiver returns `503`, then succeeds | Retries recorded, one receipt                     | Integration tests and HTTP demo           |
 | Worker crashes after remote success   | Two sends but one effect                          | Lease reclaim and receiver receipt checks |
@@ -84,6 +85,8 @@ about later changes.
   receipt depends on **downstream idempotency** with stable identity.
 - Local and CI synthetic credentials, loopback ports, fixed destinations and
   no public administrative API limit the blast radius. No real user data.
+- The [security and architecture review](SECURITY_REVIEW.md) records trust
+  boundaries, a stricter test-database guard and deployment blockers.
 - Structured worker logs and read-only queue diagnostics are available, but
   there is no centralized metrics store, tracing, alerting, retention policy,
   measured SLO or external production deployment.
