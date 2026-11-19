@@ -1,0 +1,18 @@
+name: webhook-recovery-lab-test
+
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wrl_test
+      POSTGRES_PASSWORD: synthetic_test_only
+      POSTGRES_DB: gateway_test
+    ports:
+      - '127.0.0.1:5437:5432'
+    volumes:
+      - ./docker/test-init/01_receiver_test.sql:/docker-entrypoint-initdb.d/01_receiver_test.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wrl_test -d gateway_test']
+      interval: 2s
+      timeout: 2s
+      retries: 20

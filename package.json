@@ -1,0 +1,49 @@
+{
+  "name": "webhook-recovery-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "scripts": {
+    "dev": "tsx watch src/bin/api.ts",
+    "start": "node dist/bin/api.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "migrate": "tsx src/bin/migrate.ts",
+    "migrate:receiver": "tsx src/bin/migrate-receiver.ts",
+    "demo:ingress": "tsx src/bin/send-event.ts",
+    "demo:scenario": "tsx src/bin/demo-scenario.ts",
+    "worker": "tsx src/bin/worker.ts",
+    "receiver": "tsx src/bin/receiver.ts",
+    "jobs:replay": "tsx src/bin/replay.ts",
+    "jobs:inspect": "tsx src/bin/inspect-job.ts",
+    "ops:snapshot": "tsx src/bin/ops-snapshot.ts",
+    "receiver:fault-plan": "tsx src/bin/fault-plan.ts",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration --fileParallelism=false",
+    "test": "npm run test:unit && npm run test:integration",
+    "format:check": "prettier --check .",
+    "format": "prettier --write .",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
+    "eslint": "^10.15.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^4.1.12"
+  }
+}
