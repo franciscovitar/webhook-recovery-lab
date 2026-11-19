@@ -19,6 +19,7 @@
     "receiver": "tsx src/bin/receiver.ts",
     "jobs:replay": "tsx src/bin/replay.ts",
     "jobs:inspect": "tsx src/bin/inspect-job.ts",
+    "ops:snapshot": "tsx src/bin/ops-snapshot.ts",
     "receiver:fault-plan": "tsx src/bin/fault-plan.ts",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration --fileParallelism=false",

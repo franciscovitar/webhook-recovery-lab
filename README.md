@@ -14,7 +14,7 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 - SQL migration with named database constraints, unit tests and PostgreSQL integration tests (the latter **require a running database** and never silently skip).
 - Separate worker process with short `SKIP LOCKED` claims, 15-second leases, fencing token, capped retry/backoff, dead-letter state and audited replay generations.
 - Synthetic receiver with a separate `receiver_db`, stable `delivery_id`, idempotent receipts, local fault-plan CLI and explicit attempt counters.
-- Runbook and architecture decisions in [docs](docs/DECISIONS.md).
+- Runbook and architecture decisions in [docs](docs/DECISIONS.md), read-only operational snapshots in [observability](docs/OBSERVABILITY.md), and the [engineering case study](docs/CASE_STUDY.md).
 
 **Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
 
@@ -73,6 +73,14 @@ npm run demo:scenario -- --run-id local-001
 The script binds real API and receiver HTTP listeners to ephemeral loopback ports, uses both PostgreSQL test databases and prints a fixed transcript for signed ingress, duplicate/conflict, 503 retries, a simulated crash before ACK, and a dead-letter/replay cycle. It refuses non-local or non-test database names and rejects repeated run IDs before writing. It does **not** start or verify the multi-container Compose demo. Use a new run ID for subsequent runs or recreate the disposable test stack.
 
 The pull-request workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) uses Node 24 and PostgreSQL 17, runs migrations, checks static analysis, executes unit/integration suites, rejects skipped or missing cases from machine-readable reports, and invokes the HTTP demo. It also builds and starts the five-service demo Compose stack under a unique CI project name, sends a signed webhook to the containerized API and verifies the worker's durable success and receiver's single receipt against both databases. It collects Compose logs on failure and stops only the uniquely named CI stack without deleting volumes. A workflow file alone is not evidence: inspect the actual commit-linked GitHub Actions run and logs for results.
+
+## Read-only diagnostics and bounded probe
+
+Run `npm run ops:snapshot` with `DATABASE_URL` (and optionally `RECEIVER_DATABASE_URL`) to print queue states, due work, expired leases, last-hour attempts and receiver receipts without mutating data. Missing receiver data is reported as `null`, not as a fabricated zero. See [signal definitions and limits](docs/OBSERVABILITY.md).
+
+PR CI also runs a **bounded functional probe** of 40 synthetic events at concurrency 8 against the full Compose stack. It checks that every accepted event produces a durable succeeded job and exactly one receiver receipt. It prints observed ingress p50/p95 and throughput for that single CI runner, with **no claimed SLO, capacity estimate or load-test certification**. The [case study](docs/CASE_STUDY.md) separates measured evidence from architectural claims.
+
+**Prior CI evidence:** [run #44534829515](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44534829515) verified 25 unit and 11 integration tests (0 skipped), a scripted HTTP recovery scenario and full Compose smoke. Newer snapshot and probe code requires its own commit-linked run for verification.
 
 ## Technical decisions
 

@@ -9,7 +9,7 @@ const scratch = mkdtempSync(join(tmpdir(), 'wrl-report-guard-'));
 afterAll(() => rmSync(scratch, { recursive: true, force: true }));
 
 function report(group: 'unit' | 'integration', total: number, skipped = 0) {
-  const fileCount = group === 'unit' ? 5 : 2;
+  const fileCount = group === 'unit' ? 5 : 3;
   const testResults = Array.from({ length: fileCount }, (_, index) => ({
     name: `/sandbox/tests/${group}/fixture${index}.test.ts`,
     assertionResults: Array.from(
@@ -28,7 +28,7 @@ function report(group: 'unit' | 'integration', total: number, skipped = 0) {
   };
 }
 
-function verify(unit = report('unit', 25), integration = report('integration', 11)) {
+function verify(unit = report('unit', 25), integration = report('integration', 13)) {
   const unitFile = join(scratch, 'unit.json');
   const integrationFile = join(scratch, 'integration.json');
   writeFileSync(unitFile, JSON.stringify(unit));
@@ -43,17 +43,17 @@ describe('CI report completeness guard', () => {
   it('accepts both full passing test reports', () => {
     const result = verify();
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('integration: 11 passed, 0 skipped');
+    expect(result.stdout).toContain('integration: 13 passed, 0 skipped');
   });
 
   it('rejects skipped integration tests even when the report says success', () => {
-    const result = verify(report('unit', 25), report('integration', 11, 1));
+    const result = verify(report('unit', 25), report('integration', 13, 1));
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('incomplete, skipped');
   });
 
   it('rejects silently shrinking the integration suite', () => {
-    const result = verify(report('unit', 25), report('integration', 10));
+    const result = verify(report('unit', 25), report('integration', 12));
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain('incomplete, skipped');
   });

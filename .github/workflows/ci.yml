@@ -84,6 +84,17 @@ jobs:
           COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: node scripts/ci/check-compose-smoke.mjs
 
+      - name: Bounded concurrent ingress and backlog drain probe
+        env:
+          COMPOSE_PROJECT_NAME: wrl-ci-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ci/probe-load.mjs
+
+      - name: Read-only operational snapshot from containerized databases
+        env:
+          DATABASE_URL: postgres://wrl:wrl_local_only@127.0.0.1:5436/gateway_db
+          RECEIVER_DATABASE_URL: postgres://wrl:wrl_local_only@127.0.0.1:5436/receiver_db
+        run: node dist/bin/ops-snapshot.js
+
       - name: Capture Compose diagnostics on failure
         if: failure()
         env:

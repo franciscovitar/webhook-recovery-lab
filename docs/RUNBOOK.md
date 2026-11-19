@@ -1,12 +1,16 @@
 # Local failure and recovery runbook
 
-Status: **draft; the PostgreSQL 17 integration suite has been executed (see README), but the HTTP Compose demo has not**. The CLI procedures below (fault plans, replay) are not yet exercised end to end through the Compose stack. All examples require synthetic data and the local test databases.
+Status: **PostgreSQL integration, scripted HTTP recovery, and the full Compose smoke test have passed in GitHub Actions** (see README and PR). The manual CLI procedures below (fault-plan setup and replay through containerized services) have not all been executed as an operator workflow. All examples require synthetic data and local databases.
 
 ## Read-only diagnosis
 
 1. `GET /health` checks process liveness; `GET /ready` checks the API's DB dependency. Do not interpret `/health` as a successful delivery.
 2. `npm run jobs:inspect -- <event-id>` prints the job state, lease, attempt history and last error class. `PENDING` means due later; `LEASED` means claimed until lease expiry; `DEAD` means no further automatic attempt.
 3. For the fake receiver, query `receiver_attempt_counts` and `receiver_receipts` **in receiver_db**, independently of the gateway database. Receipt count is the effect oracle; attempts count is the physical HTTP delivery count.
+
+## Queue-wide diagnostic snapshot
+
+`npm run ops:snapshot` queries the gateway database read-only. With `RECEIVER_DATABASE_URL` set it also reports independent receiver counts. Watch due pending jobs, oldest due age, expired leases, and `DEAD`; do not interpret `receiver: null` as zero receipts. The two database readings are not atomic and this is not a public metrics endpoint. See [signal definitions](OBSERVABILITY.md).
 
 ## Simulate a transient failure
 

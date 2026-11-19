@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 
 const checks = [
   { group: 'unit', file: process.argv[2], minimum: 25, requiredFiles: 5 },
-  { group: 'integration', file: process.argv[3], minimum: 11, requiredFiles: 2 },
+  { group: 'integration', file: process.argv[3], minimum: 13, requiredFiles: 3 },
 ];
 
 if (process.argv.length !== 4) {
