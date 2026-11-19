@@ -16,7 +16,9 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 - Synthetic receiver with a separate `receiver_db`, stable `delivery_id`, idempotent receipts, local fault-plan CLI and explicit attempt counters.
 - Runbook and architecture decisions in [docs](docs/DECISIONS.md).
 
-**Verification status:** TypeScript, unit tests, lint and build are locally executable. **The actual PostgreSQL SQL, locking, Compose boot and end-to-end behavior have not yet been verified against a live server**. A complete deterministic scripted demo and hosted CI evidence are still pending. Source code presence alone is not proof of the DB guarantees.
+**Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
+
+**Still unverified:** the demo Compose stack (`compose.yaml`: api, worker, receiver) and HTTP end-to-end flow, exhaustion of the five-attempt retry budget, real backoff timing, a deterministic scripted demo, and hosted CI evidence. This is a single local run, not a production or load guarantee.
 
 ## Local setup
 
@@ -56,12 +58,14 @@ npm run test:integration
 docker compose -f compose.test.yaml down
 ```
 
-The integration suite fails if either test URL is missing, not isolated, or PostgreSQL is unreachable. These commands require Docker and are **instructions, not observed test results**. Passing unit tests alone does not verify transactions, SQL constraints or concurrency. A test failure should be investigated before any claim of recovery or correctness.
+The integration suite fails if either test URL is missing, not isolated, or PostgreSQL is unreachable. These commands require Docker. Passing unit tests alone does not verify transactions, SQL constraints or concurrency; the integration results above come from running exactly these commands. A test failure should be investigated before any claim of recovery or correctness.
+
+On Windows with `core.autocrlf=true`, `npm run format:check` reports every file because the working tree is CRLF while Prettier expects LF; this is a checkout artifact (use `npx prettier --check . --end-of-line crlf` locally to confirm).
 
 ## Technical decisions
 
 An inbox row and its job share one transaction; the HTTP handler never calls the downstream system. This deliberately avoids acknowledging an event that would be lost before persistence. A `409` on mismatched payload protects against accidentally reusing an event identity.
 
-The worker is designed for **at-least-once attempts**, not exactly-once delivery to an external service. Recovery after a crash may require redelivery, and the receiver enforces idempotency with a stable `delivery_id` in its own database. This behavior is the target of the real-DB integration tests, not yet a verified outcome.
+The worker is designed for **at-least-once attempts**, not exactly-once delivery to an external service. Recovery after a crash may require redelivery, and the receiver enforces idempotency with a stable `delivery_id` in its own database. This behavior is exercised by the real-DB integration tests, which passed in the local run above; the end-to-end Compose path is not yet verified.
 
 Security boundaries: local-only synthetic keys, no public administrative endpoints, no user-controlled destinations, no raw body or secret in logs, and no external hosting.

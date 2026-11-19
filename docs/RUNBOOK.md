@@ -1,6 +1,6 @@
 # Local failure and recovery runbook
 
-Status: **draft until PostgreSQL 17 integration and HTTP Compose demo are executed**. All examples require synthetic data and the local test databases.
+Status: **draft; the PostgreSQL 17 integration suite has been executed (see README), but the HTTP Compose demo has not**. The CLI procedures below (fault plans, replay) are not yet exercised end to end through the Compose stack. All examples require synthetic data and the local test databases.
 
 ## Read-only diagnosis
 
