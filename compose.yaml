@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wrl
+      POSTGRES_PASSWORD: wrl_local_only
+      POSTGRES_DB: gateway_db
+    ports:
+      - '127.0.0.1:5436:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wrl -d gateway_db']
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  migrate:
+    build: .
+    command: ['node', 'dist/bin/migrate.js']
+    environment:
+      DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/gateway_db
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/gateway_db
+      WEBHOOK_SIGNING_KEY_ID: sandbox-v1
+      WEBHOOK_SIGNING_SECRET: replace-with-a-long-random-development-secret
+      PORT: '3000'
+    ports:
+      - '127.0.0.1:3000:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
