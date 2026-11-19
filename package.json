@@ -14,6 +14,7 @@
     "migrate": "tsx src/bin/migrate.ts",
     "migrate:receiver": "tsx src/bin/migrate-receiver.ts",
     "demo:ingress": "tsx src/bin/send-event.ts",
+    "demo:scenario": "tsx src/bin/demo-scenario.ts",
     "worker": "tsx src/bin/worker.ts",
     "receiver": "tsx src/bin/receiver.ts",
     "jobs:replay": "tsx src/bin/replay.ts",

@@ -18,7 +18,7 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 
 **Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
 
-**Still unverified:** the demo Compose stack (`compose.yaml`: api, worker, receiver) and HTTP end-to-end flow, exhaustion of the five-attempt retry budget, real backoff timing, a deterministic scripted demo, and hosted CI evidence. This is a single local run, not a production or load guarantee.
+**Still unverified at the documented local checkpoint:** the demo Compose stack (`compose.yaml`: api, worker, receiver) and hosted CI. Additional retry-budget and persisted-backoff integration tests and a deterministic local-HTTP demo are included in the branch; check the actual CI run before claiming they passed. The original local evidence is not a production or load guarantee.
 
 ## Local setup
 
@@ -61,6 +61,18 @@ docker compose -f compose.test.yaml down
 The integration suite fails if either test URL is missing, not isolated, or PostgreSQL is unreachable. These commands require Docker. Passing unit tests alone does not verify transactions, SQL constraints or concurrency; the integration results above come from running exactly these commands. A test failure should be investigated before any claim of recovery or correctness.
 
 On Windows with `core.autocrlf=true`, `npm run format:check` reports every file because the working tree is CRLF while Prettier expects LF; this is a checkout artifact (use `npx prettier --check . --end-of-line crlf` locally to confirm).
+
+## Repeatable recovery demo and CI
+
+After setting up the two disposable `gateway_test` and `receiver_test` databases and running migrations as above, run:
+
+```bash
+npm run demo:scenario -- --run-id local-001
+```
+
+The script binds real API and receiver HTTP listeners to ephemeral loopback ports, uses both PostgreSQL test databases and prints a fixed transcript for signed ingress, duplicate/conflict, 503 retries, a simulated crash before ACK, and a dead-letter/replay cycle. It refuses non-local or non-test database names and rejects repeated run IDs before writing. It does **not** start or verify the multi-container Compose demo. Use a new run ID for subsequent runs or recreate the disposable test stack.
+
+The pull-request workflow [`.github/workflows/ci.yml`](.github/workflows/ci.yml) uses Node 24 and PostgreSQL 17, runs migrations, checks static analysis, executes unit/integration suites, rejects skipped or missing cases from machine-readable reports, and invokes the HTTP demo. A workflow file alone is not evidence: inspect the actual commit-linked GitHub Actions run and logs for results.
 
 ## Technical decisions
 

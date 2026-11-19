@@ -142,6 +142,93 @@ describe('worker recovery using two real PostgreSQL databases', () => {
     expect(attempts.rows.map((r) => r.result)).toEqual(['RETRY', 'RETRY', 'SUCCEEDED']);
   });
 
+  it('persists exponential backoff and does not claim a retry before it is due', async () => {
+    const created = await createJob('ord_backoff');
+    await receiverDb.query(
+      `INSERT INTO receiver_fault_plans (delivery_id, transient_remaining, transient_status) VALUES ($1,2,503)`,
+      [created.deliveryId],
+    );
+    const runner = new WorkerRunner({ store, transport, random: () => 0 });
+
+    for (const expectedDelay of [1_000, 2_000]) {
+      expect(await runner.runOnce()).toBe(true);
+      const row = await db.query<{
+        status: string;
+        delay_ms: number;
+      }>(
+        `SELECT status, EXTRACT(EPOCH FROM (next_attempt_at - updated_at)) * 1000 AS delay_ms
+           FROM delivery_jobs WHERE id = $1`,
+        [created.jobId],
+      );
+      expect(row.rows[0]?.status).toBe('PENDING');
+      expect(Number(row.rows[0]?.delay_ms)).toBeGreaterThanOrEqual(expectedDelay - 100);
+      expect(Number(row.rows[0]?.delay_ms)).toBeLessThanOrEqual(expectedDelay + 100);
+      expect(await runner.runOnce()).toBe(false);
+      await forceJobDue(created.jobId);
+    }
+
+    expect(await runner.runOnce()).toBe(true);
+    const job = await db.query<{ status: string; total_attempts: number }>(
+      'SELECT status,total_attempts FROM delivery_jobs WHERE id=$1',
+      [created.jobId],
+    );
+    expect(job.rows[0]).toEqual({ status: 'SUCCEEDED', total_attempts: 3 });
+  });
+
+  it('dead-letters after exactly five transient failures without scheduling a sixth', async () => {
+    const created = await createJob('ord_budget');
+    await receiverDb.query(
+      `INSERT INTO receiver_fault_plans (delivery_id, transient_remaining, transient_status) VALUES ($1,9,503)`,
+      [created.deliveryId],
+    );
+    const runner = new WorkerRunner({ store, transport, random: () => 0 });
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      expect(await runner.runOnce()).toBe(true);
+      if (attempt < 5) await forceJobDue(created.jobId);
+    }
+    expect(await runner.runOnce()).toBe(false);
+    const job = await db.query<{
+      status: string;
+      total_attempts: number;
+      attempts_in_generation: number;
+    }>('SELECT status,total_attempts,attempts_in_generation FROM delivery_jobs WHERE id=$1', [created.jobId]);
+    expect(job.rows[0]).toEqual({ status: 'DEAD', total_attempts: 5, attempts_in_generation: 5 });
+    const attempts = await db.query<{ result: string }>(
+      'SELECT result FROM delivery_attempts WHERE job_id=$1 ORDER BY attempt_sequence',
+      [created.jobId],
+    );
+    expect(attempts.rows.map((row) => row.result)).toEqual(['RETRY', 'RETRY', 'RETRY', 'RETRY', 'DEAD']);
+  });
+
+  it('exhausts the budget if the fifth worker lease expires before ACK', async () => {
+    const created = await createJob('ord_budget_crashes');
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const claimed = await store.claimNext();
+      expect(claimed?.jobId).toBe(created.jobId);
+      expect(claimed?.attemptSequence).toBe(attempt);
+      await db.query(
+        `UPDATE delivery_jobs SET lease_until = clock_timestamp() - INTERVAL '1 second' WHERE id=$1`,
+        [created.jobId],
+      );
+    }
+    expect(await store.claimNext()).toBeNull();
+    const state = await db.query<{
+      status: string;
+      total_attempts: number;
+      last_error_class: string;
+    }>('SELECT status,total_attempts,last_error_class FROM delivery_jobs WHERE id=$1', [created.jobId]);
+    expect(state.rows[0]).toEqual({
+      status: 'DEAD',
+      total_attempts: 5,
+      last_error_class: 'retry_budget_exhausted',
+    });
+    const history = await db.query<{ result: string }>(
+      'SELECT result FROM delivery_attempts WHERE job_id=$1 ORDER BY attempt_sequence',
+      [created.jobId],
+    );
+    expect(history.rows.map((row) => row.result)).toEqual(Array(5).fill('ABANDONED'));
+  });
+
   it('recovers after receiver success but before ACK: two sends, one effect', async () => {
     const created = await createJob('ord_crash');
     const first = new WorkerRunner({
