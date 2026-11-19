@@ -10,6 +10,7 @@ services:
       - '127.0.0.1:5436:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/init/01_receiver.sql:/docker-entrypoint-initdb.d/01_receiver.sql:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U wrl -d gateway_db']
       interval: 2s
@@ -18,9 +19,13 @@ services:
 
   migrate:
     build: .
-    command: ['node', 'dist/bin/migrate.js']
+    command:
+      - /bin/sh
+      - -c
+      - node dist/bin/migrate.js && node dist/bin/migrate-receiver.js
     environment:
       DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/gateway_db
+      RECEIVER_DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/receiver_db
     depends_on:
       db:
         condition: service_healthy
@@ -38,6 +43,32 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  receiver:
+    build: .
+    command: ['node', 'dist/bin/receiver.js']
+    environment:
+      RECEIVER_DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/receiver_db
+      RECEIVER_PORT: '3001'
+      INTERNAL_DELIVERY_TOKEN: replace-with-a-separate-long-internal-demo-token
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ['node', 'dist/bin/worker.js']
+    environment:
+      DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/gateway_db
+      RECEIVER_URL: http://receiver:3001/v1/receive
+      INTERNAL_DELIVERY_TOKEN: replace-with-a-separate-long-internal-demo-token
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      receiver:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

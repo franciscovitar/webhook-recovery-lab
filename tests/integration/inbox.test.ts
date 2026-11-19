@@ -5,17 +5,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createPool } from '../../src/db/pool.js';
 import { PostgresInboxRepository } from '../../src/db/postgres-inbox.js';
 import { buildApp } from '../../src/http/app.js';
+import { requireTestDatabaseUrl } from './test-urls.js';
 
 // This suite NEVER skips. CI must fail if the actual PostgreSQL service is unavailable.
-const connectionString = process.env['TEST_DATABASE_URL'];
-if (!connectionString) {
-  throw new Error('TEST_DATABASE_URL required: integration suite must run against real PostgreSQL');
-}
+const connectionString = requireTestDatabaseUrl('TEST_DATABASE_URL', 'gateway_test');
 
 const pool = createPool(connectionString);
 const repository = new PostgresInboxRepository(pool);
 const secret = 'integration-signing-secret-for-only-synthetic-fixtures';
 const app = buildApp({ repository, signingKeys: new Map([['sandbox-v1', secret]]) });
+const createdEventIds: string[] = [];
 
 beforeAll(async () => {
   await pool.query('SELECT 1');
@@ -24,6 +23,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (createdEventIds.length > 0) {
+    await pool.query(
+      'DELETE FROM delivery_jobs WHERE inbox_event_id IN (SELECT id FROM inbox_events WHERE event_id = ANY($1::uuid[]))',
+      [createdEventIds],
+    );
+    await pool.query('DELETE FROM inbox_events WHERE event_id = ANY($1::uuid[])', [createdEventIds]);
+  }
   await app.close();
   await pool.end();
 });
@@ -52,6 +58,7 @@ describe('real PostgreSQL ingress', () => {
   it('persists inbox and exactly one job and handles redelivery', async () => {
     const payload = eventPayload();
     const eventId = JSON.parse(payload).event_id as string;
+    createdEventIds.push(eventId);
     const original = await app.inject({
       method: 'POST',
       url: '/v1/webhooks/sandbox',
@@ -79,6 +86,7 @@ describe('real PostgreSQL ingress', () => {
 
   it('returns a conflict for changed payload without a second job', async () => {
     const eventId = randomUUID();
+    createdEventIds.push(eventId);
     const first = eventPayload(eventId, 'ord_1');
     const second = eventPayload(eventId, 'ord_2');
     expect(
@@ -111,6 +119,7 @@ describe('real PostgreSQL ingress', () => {
   it('deduplicates 20 concurrent connections by database unique constraint', async () => {
     const payload = eventPayload();
     const eventId = JSON.parse(payload).event_id as string;
+    createdEventIds.push(eventId);
     const responses = await Promise.all(
       Array.from({ length: 20 }, () =>
         app.inject({ method: 'POST', url: '/v1/webhooks/sandbox', payload, headers: signed(payload) }),
