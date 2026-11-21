@@ -61,7 +61,7 @@ flowchart TD
 - Add a separated authenticated operations API: list/query event and delivery, inspect redacted payload, request retries/replays with reason and idempotency, endpoint configuration and audit.
 - Add an accessible responsive web frontend (Next/React or small SPA based on verified deployment fit). Frontend state is a **read model** of backend state, not the authority.
 - Tenant/workspace isolation is a **new requirement**, not a current capability. Start with one fixed isolated demo workspace and explicit roles; multi-tenant expansion requires dedicated schema/policy tests.
-- Signed inbound events, durable deduplication, bounded retries, dead-letter and replay remain server-side. Enforce safe destination scheme, DNS/IP/redirect/allowlist policy to prevent SSRF. In the public version use *only controlled synthetic receiver URLs*, rate limits/quotas and time-bounded data.
+- Signed inbound events, durable deduplication, bounded retries, dead-letter and replay remain server-side. Enforce safe destination scheme, DNS/IP/redirect/allowlist policy to prevent SSRF. In the public version use _only controlled synthetic receiver URLs_, rate limits/quotas and time-bounded data.
 - Keep secrets out of responses/logs. Token rotation requires overlap and audit; failed delivery must reveal sanitized diagnostics without exposing full sensitive bodies.
 
 ## Invariants and test evidence required
@@ -80,7 +80,7 @@ flowchart TD
 **P1:** metrics and charts, key rotation, endpoint configuration, audit/RBAC, alerts, retention/cleanup and download of redacted diagnostics.
 **P2:** team invites, usage billing, multiple external providers, arbitrary enterprise connectors and SLO automation only after security, cost and use cases justify them.
 
-Done when a visitor can log into a *restricted public demo*, inspect real persisted test events, generate a signed synthetic event, observe an actual worker delivery/retry/dead-letter and safely replay it. The same build must pass API/database/worker/browser tests, role-denial and SSRF negative cases. This is **not yet delivered**; the current public web experience is a browser-only simulator. Production deployment/provider/spend/security changes require later explicit authority.
+Done when a visitor can log into a _restricted public demo_, inspect real persisted test events, generate a signed synthetic event, observe an actual worker delivery/retry/dead-letter and safely replay it. The same build must pass API/database/worker/browser tests, role-denial and SSRF negative cases. This is **not yet delivered**; the current public web experience is a browser-only simulator. Production deployment/provider/spend/security changes require later explicit authority.
 
 ## Implementation sequence
 
