@@ -1,3 +1,4 @@
+/* global document -- browser-only entrypoint; the backend's default ESLint environment is Node. */
 import { apply, available, initialState, MAX_ATTEMPTS } from './model.js';
 
 let state=initialState();
