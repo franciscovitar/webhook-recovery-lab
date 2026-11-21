@@ -54,6 +54,9 @@ jobs:
           npm run format:check
           npm run build
 
+      - name: Public showcase model tests (isolated)
+        run: node --test showcase/model.test.mjs
+
       - name: Unit suite with machine-readable report
         run: npm run test:unit -- --reporter=json --outputFile=unit-results.json
 

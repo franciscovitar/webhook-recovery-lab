@@ -2,7 +2,7 @@
 
 **Project:** [Webhook Recovery Lab](https://github.com/franciscovitar/webhook-recovery-lab)
 
-**Role and scope:** personal portfolio engineering project, all data synthetic.
+**Role and scope:** personal portfolio engineering project, all data synthetic. An independent [public-facing console source](../showcase/) models failure scenarios in browser memory; the real worker and databases remain private and locally/CI executed, never deployed as this website.
 Node.js 24, TypeScript, Fastify, PostgreSQL 17, Docker Compose, Vitest and
 GitHub Actions. This is an educational system that demonstrates failure
 boundaries; it is **not** evidence of operating a production service.
