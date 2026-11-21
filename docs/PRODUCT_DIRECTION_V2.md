@@ -12,13 +12,13 @@ Preserve the existing backend tests and browser-only `showcase/` simulation as e
 
 ## Real-user jobs and surface
 
-| Role | Product workflow | Expected outcome |
-| --- | --- | --- |
-| Integration developer | Create an isolated test endpoint, find signing instructions, send a safe synthetic event | A signed event arrives and appears in an event inbox with traceable status |
-| Operations engineer | Filter failed/delayed deliveries, inspect sanitized error and timeline, retry one | Status changes from a real worker/DB attempt; retries cannot double-apply consumer effect |
-| Team lead | Inspect delivery success, latency/backlog, dead-letter reasons and trend | Operational counts come from persisted state, not static UI counters |
-| Workspace admin | Manage roles, safe destination allowlist, signing-key rotation and retention | Only an authorized operator can mutate security or replay settings |
-| Read-only reviewer | Explore seeded events and drill into outcomes | Can inspect but not change keys/endpoints or trigger outbound traffic |
+| Role                  | Product workflow                                                                         | Expected outcome                                                                          |
+| --------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Integration developer | Create an isolated test endpoint, find signing instructions, send a safe synthetic event | A signed event arrives and appears in an event inbox with traceable status                |
+| Operations engineer   | Filter failed/delayed deliveries, inspect sanitized error and timeline, retry one        | Status changes from a real worker/DB attempt; retries cannot double-apply consumer effect |
+| Team lead             | Inspect delivery success, latency/backlog, dead-letter reasons and trend                 | Operational counts come from persisted state, not static UI counters                      |
+| Workspace admin       | Manage roles, safe destination allowlist, signing-key rotation and retention             | Only an authorized operator can mutate security or replay settings                        |
+| Read-only reviewer    | Explore seeded events and drill into outcomes                                            | Can inspect but not change keys/endpoints or trigger outbound traffic                     |
 
 ## Information architecture
 
@@ -33,14 +33,14 @@ Do not fill the normal dashboard with “what is idempotency?”, “here is the
 
 ## Reuse and real gaps
 
-| Existing source | Reuse | Gap before public business-like app |
-| --- | --- | --- |
-| `src/receiver/app.ts`, `src/http/app.ts`, `src/core/signature.ts` | HMAC verification, HTTP ingress, health/ready checks | Authenticated configuration/API; request-size/rate/tenant boundaries |
-| `src/core/inbox.ts`, `src/db/postgres-inbox.ts` | Durable inbox/idempotent acceptance | Read/query APIs with scoped redacted data |
-| `src/worker/runner.ts`, `src/db/postgres-delivery.ts`, `src/core/delivery.ts` | Leases, processing, retries, delivery state | Operator-controlled safe replay/hold/resume, audit and permission gates |
-| `src/bin/{inspect-job,ops-snapshot,replay,send-event}.ts` | Proven operational CLIs | Reuse command/domain logic behind narrow authenticated API, don't shell out from a public UI |
-| `migrations/`, `tests/unit`, `tests/integration`, CI | Postgres schema/negative-case verification | Add workspace/RBAC/audit and browser E2E with real worker; keep regressions |
-| `showcase/` | Deterministic synthetic visual scenarios | Preserve as separate QA artifact while product console uses live seeded backend state |
+| Existing source                                                               | Reuse                                                | Gap before public business-like app                                                          |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `src/receiver/app.ts`, `src/http/app.ts`, `src/core/signature.ts`             | HMAC verification, HTTP ingress, health/ready checks | Authenticated configuration/API; request-size/rate/tenant boundaries                         |
+| `src/core/inbox.ts`, `src/db/postgres-inbox.ts`                               | Durable inbox/idempotent acceptance                  | Read/query APIs with scoped redacted data                                                    |
+| `src/worker/runner.ts`, `src/db/postgres-delivery.ts`, `src/core/delivery.ts` | Leases, processing, retries, delivery state          | Operator-controlled safe replay/hold/resume, audit and permission gates                      |
+| `src/bin/{inspect-job,ops-snapshot,replay,send-event}.ts`                     | Proven operational CLIs                              | Reuse command/domain logic behind narrow authenticated API, don't shell out from a public UI |
+| `migrations/`, `tests/unit`, `tests/integration`, CI                          | Postgres schema/negative-case verification           | Add workspace/RBAC/audit and browser E2E with real worker; keep regressions                  |
+| `showcase/`                                                                   | Deterministic synthetic visual scenarios             | Preserve as separate QA artifact while product console uses live seeded backend state        |
 
 **Critical gap:** current HTTP ingress and operational commands are not a publicly authenticated multi-user SaaS interface. Do not expose private repo internals, signing keys, arbitrary target URLs or worker/admin mutation routes merely to make the demo interactive.
 
