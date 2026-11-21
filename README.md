@@ -1,12 +1,12 @@
 # Webhook Recovery Lab
 
-<p><strong>Status: implementation in progress — not production software.</strong></p>
+<p><strong>Status: V1 implementation merged into main; verified in local and hosted CI checkpoints — not production software.</strong></p>
 
 A small, failure-aware backend for **signed incoming webhooks** and durable delivery jobs, built with TypeScript, Fastify and PostgreSQL. All events are synthetic. The goal is to demonstrate reliability boundaries with tests, not to simulate production experience.
 
 Architecture and planned fault scenarios: [PAS design review #668](https://github.com/franciscovitar/personal-ai-system/pull/668).
 
-## Implemented in the current development branch
+## Implemented in main
 
 - HMAC-SHA256 signature over `timestamp + '.' + raw request bytes`, including a replay window and constant-time comparison.
 - Strict JSON event schema, body limit, explicit HTTP errors and independent `/health` and `/ready` checks.
@@ -18,7 +18,11 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 
 **Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
 
-**Still unverified at the documented local checkpoint:** the demo Compose stack (`compose.yaml`: api, worker, receiver) and hosted CI. Additional retry-budget and persisted-backoff integration tests and a deterministic local-HTTP demo are included in the branch; check the actual CI run before claiming they passed. The original local evidence is not a production or load guarantee.
+**Subsequent hosted checkpoints:** [CI #44534829515](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44534829515) verified the multi-service Compose smoke after real PostgreSQL test suites; [CI #44538366466](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44538366466) is another successful PR run. These are historical branch-linked CI observations, not production experience or automatic proof of future changes.
+
+## Public interactive console
+
+The independent `showcase/` folder demonstrates signed ingress, duplicates, worker crash after receiver commit, lease recovery, bounded retry and replay through a synthetic JavaScript state model. It is intended for public hosting on Vercel, **not** for hosting the Fastify/PostgreSQL/worker backend. No real HMAC verification, network request, Postgres process or API is run from the browser. Run its tests via `cd showcase && npm test`. The underlying repository stays private unless its owner explicitly changes visibility.
 
 ## Local setup
 
