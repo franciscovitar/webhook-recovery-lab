@@ -1,30 +1,41 @@
 # Webhook Recovery Lab
 
-> **Product direction (24 Nov 2026):** a no-login, isolated synthetic **Webhook Operations Console** built on the existing Fastify/PostgreSQL engine. The V3 local implementation now includes guest sessions, workspace-scoped reads and dedupe, signed synthetic ingress, a supervised delivery worker, controlled receiver failures, restore/replay, and a React/Vite interface. It is locally verified only; no hosting, public release, or deployment is claimed. See [V3 architecture](docs/PRODUCT_ARCHITECTURE_V3.md) and [implementation checkpoint](docs/IMPLEMENTATION_V3_CHECKPOINT.md).
+**A functional webhook operations console for synthetic orders.**
 
-<p><strong>Status: V1 implementation merged into main; verified in local and hosted CI checkpoints — not production software.</strong></p>
+[Open the live app](https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com) · [Engineering case study](https://franciscovitar.vercel.app/work/webhook-recovery-lab)
 
-A small, failure-aware backend for **signed incoming webhooks** and durable delivery jobs, built with TypeScript, Fastify and PostgreSQL. All events are synthetic. The goal is to demonstrate reliability boundaries with tests, not to simulate production experience.
+Send a signed test event, inspect its delivery, deliberately reject a delivery, restore the receiver and replay it. No account is needed. The Spanish-language interface uses real HTTP processing and PostgreSQL persistence, not an in-memory simulation.
 
-Architecture and planned fault scenarios: [PAS design review #668](https://github.com/franciscovitar/personal-ai-system/pull/668).
+## Try it
 
-## Implemented in main
+1. Open the app and create a test order with a normal delivery.
+2. Inspect the event and resend its identical payload to observe deduplication.
+3. Choose a controlled failure, open Recovery (Recuperación), restore the receiver and replay the delivery.
+4. Inspect recorded attempts and technical details. Each browser has its own temporary workspace.
 
-- HMAC-SHA256 signature over `timestamp + '.' + raw request bytes`, including a replay window and constant-time comparison.
-- Strict JSON event schema, body limit, explicit HTTP errors and independent `/health` and `/ready` checks.
-- Transactional PostgreSQL inbox + delivery job. Returns `202` only after commit, deduplicates by `(provider, event_id)` and returns `409` if the same identity is reused with changed bytes.
-- SQL migration with named database constraints, unit tests and PostgreSQL integration tests (the latter **require a running database** and never silently skip).
-- Separate worker process with short `SKIP LOCKED` claims, 15-second leases, fencing token, capped retry/backoff, dead-letter state and audited replay generations.
-- Synthetic receiver with a separate `receiver_db`, stable `delivery_id`, idempotent receipts, local fault-plan CLI and explicit attempt counters.
-- Runbook and architecture decisions in [docs](docs/DECISIONS.md), read-only operational snapshots in [observability](docs/OBSERVABILITY.md), the [engineering case study](docs/CASE_STUDY.md), and the [architecture/security review](docs/SECURITY_REVIEW.md).
+The public sandbox uses fictional data only. Free hosting may take about a minute to wake; quotas and temporary workspace expiration apply. This is a portfolio demonstration, not a production webhook platform.
 
-**Verification status (local run, 2026-11-19, commit `79355ef`):** typecheck, lint, build and 21 unit tests pass. The 8 integration tests (0 skipped) pass against PostgreSQL 17.12 started from `compose.test.yaml`, and were stable over three consecutive runs: concurrent duplicate ingress (20 connections, one row), changed-payload `409`, six workers competing for one job, 503 retries, a worker crash after receiver success (two deliveries, one receipt), stale-ACK rejection after lease reclaim, and dead-letter with audited replay. Rollback of the inbox row when the job insert fails was additionally checked by hand with a temporary trigger; it is **not** an automated test.
+## Architecture
 
-**Subsequent hosted checkpoints:** [CI #44534829515](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44534829515) verified the multi-service Compose smoke after real PostgreSQL test suites; [CI #44538366466](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44538366466) is another successful PR run. These are historical branch-linked CI observations, not production experience or automatic proof of future changes.
+React/Vite and Fastify share one Render Free service with an event-driven worker and a loopback-only HTTP receiver. Two logical PostgreSQL databases on an independent Neon Free project separate gateway and receiver transactions.
 
-## V3 local functional console
+- Signed raw-byte HMAC ingress and transactional inbox/job persistence.
+- Workspace-scoped deduplication, bounded quotas, opaque cookie sessions and same-origin mutations.
+- Row-locked leases and fencing, bounded retries, audited replay and idempotent downstream effects.
+- Safe cleanup of expired workspaces, readiness checks of migration versions and a fixed internal receiver.
+- At-least-once delivery attempts, not exactly-once transport.
 
-The same-origin application serves a real React/Vite operations UI from Fastify. A visitor can start a temporary browser-cookie workspace, send a synthetic signed order event through the actual HMAC ingress, follow the persisted delivery attempt, and exercise the controlled receiver rejection, restore, and audited replay path. Workspace event queries, recovery actions, receiver receipts, and replay audits are scoped to the server-validated guest session. The legacy CLI and multi-process Compose setup remain available.
+## Verification and status
+
+The V3 local checkpoint at `c45a0148` documents 32 unit, 29 PostgreSQL integration and 5 showcase tests, build, lint, format and real browser QA. Hosted QA of the earlier UI documented signed ingress, dedupe, failure/recovery, isolation, persistence, cold start and pending-job recovery. The Spanish presentation commit `ec93d2beda58d0678a8c2e9d81596fe69f5ea157` built successfully on Render and went Live on 2026-11-24; the owner approved proceeding with the main merge. The complete automated and browser suite was not rerun for that presentation-only revision.
+
+- [V3 architecture](docs/PRODUCT_ARCHITECTURE_V3.md)
+- [Implementation checkpoint](docs/IMPLEMENTATION_V3_CHECKPOINT.md)
+- [Local browser QA](docs/qa/v3-visual-2026-11-24/README.md)
+- [Spanish presentation](docs/qa/V3_PRESENTATION_ES_20261124.md)
+- [Hosted QA and limitations](docs/hosting/NEON_RENDER_DEPLOYMENT_STATUS_2026-11-24.md)
+
+## Run locally
 
 To run it locally, first start the existing PostgreSQL service and install the lockfile dependencies. Set `DATABASE_URL`, `RECEIVER_DATABASE_URL`, `WEBHOOK_SIGNING_KEY_ID`, `WEBHOOK_SIGNING_SECRET` and `INTERNAL_DELIVERY_TOKEN` in `.env`; use only synthetic local secrets. Then apply the additive migrations and build/start the combined service:
 
@@ -107,12 +118,12 @@ PR CI also runs a **bounded functional probe** of 40 synthetic events at concurr
 
 ## Security review and exposure boundary
 
-See [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) for the explicit trust boundaries and the production-exposure gates. The review hardens the integration test database guard and adds an automated PostgreSQL rollback fault test. This remains a **synthetic, local-only laboratory**: do not publicly deploy it with the demo keys, lack of rate limiting, and no external TLS/secret-management plan. A green CI run is not a vulnerability scan or production certification.
+See [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) for the explicit trust boundaries and the production-exposure gates. The review hardens the integration test database guard and adds an automated PostgreSQL rollback fault test. The original local-only mode must never be publicly deployed with demo keys. V3 uses a separate bounded synthetic public-demo mode; it is not certified for real customer traffic. A green CI run is not a vulnerability scan or production certification.
 
 ## Technical decisions
 
 An inbox row and its job share one transaction; the HTTP handler never calls the downstream system. This deliberately avoids acknowledging an event that would be lost before persistence. A `409` on mismatched payload protects against accidentally reusing an event identity.
 
-The worker is designed for **at-least-once attempts**, not exactly-once delivery to an external service. Recovery after a crash may require redelivery, and the receiver enforces idempotency with a stable `delivery_id` in its own database. This behavior is exercised by the real-DB integration tests, which passed in the local run above; the end-to-end Compose path is not yet verified.
+The worker is designed for **at-least-once attempts**, not exactly-once delivery to an external service. Recovery after a crash may require redelivery, and the receiver enforces idempotency with a stable `delivery_id` in its own database. This behavior is exercised by the real-DB integration tests, which passed in the local run above; the V3 Compose path was subsequently verified at the local checkpoint above.
 
-Security boundaries: local-only synthetic keys, no public administrative endpoints, no user-controlled destinations, no raw body or secret in logs, and no external hosting.
+Security boundaries: synthetic data, protected runtime credentials, no public administrative endpoints, no user-controlled destinations, and no secrets in logs. The hosted V3 sandbox disables legacy unscoped ingress.

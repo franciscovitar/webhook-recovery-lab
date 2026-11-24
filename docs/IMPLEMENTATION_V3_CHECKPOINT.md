@@ -60,3 +60,7 @@ The QA URL is available at https://webhook-recovery-lab-v3-qa-franv-20261124.onr
 ## Presentation refinement — source checkpoint
 
 Owner requested a Spanish-first, more understandable UI after inspecting the deployed version. See [V3 presentation refinement](qa/V3_PRESENTATION_ES_20261124.md). Backend and hosting remain unchanged. New visual/build/browser QA is pending; existing deployed QA evidence remains attributed to its prior commit.
+
+## Owner-approved main closeout — 2026-11-24
+
+Presentation revision `ec93d2beda58d0678a8c2e9d81596fe69f5ea157` built successfully and became Live on Render (deploy `dep-dc2ugbdg1s2s73b84ing`). Owner requested merge to main and portfolio update after inspecting the app. Public sandbox URL: https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com. Previous functional and browser QA remains attributed to the earlier validated revision; no new full test-suite pass claimed. This documentation-only closeout does not modify runtime, infrastructure, or repository visibility. Keep the existing live deployment; no redundant rebuild is needed.
