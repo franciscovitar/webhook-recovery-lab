@@ -1,6 +1,6 @@
 # Webhook Recovery Lab
 
-> **Product direction (21 Nov 2026):** evolve this real Fastify/PostgreSQL receiver, inbox, worker and recovery engine into an authenticated, company-usable **Webhook Operations Console**. The existing browser-only `showcase/` remains technical evidence, not the future main UI. See [docs/PRODUCT_DIRECTION_V2.md](docs/PRODUCT_DIRECTION_V2.md) for roles, secure architecture, reuse map, delivery stages and Definition of Done. This is a goal, **not** an already deployed SaaS backend.
+> **Product direction (24 Nov 2026):** evolve the existing engine into a real, no-login, isolated synthetic **Webhook Operations Console** with a single-service hosting candidate and US$0 additional budget. See [current V3 architecture and UX](docs/PRODUCT_ARCHITECTURE_V3.md). The browser-only showcase remains technical evidence. V3 is design only; hosting preflight and implementation remain pending.
 
 <p><strong>Status: V1 implementation merged into main; verified in local and hosted CI checkpoints — not production software.</strong></p>
 

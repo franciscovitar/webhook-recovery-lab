@@ -1,5 +1,7 @@
 # Webhook Recovery — Product-first operations platform
 
+> **Superseded for public portfolio delivery (2026-11-24):** [PRODUCT_ARCHITECTURE_V3.md](PRODUCT_ARCHITECTURE_V3.md) is the current owner-approved design direction. V2 is retained for historical rationale; login and enterprise deployment assumptions below are not current requirements. No V3 implementation is claimed.
+
 Status: **owner-approved product goal / proposed design; not yet implemented as a production-like web app**.
 Decision date: 2026-11-21 (Argentina).
 Repository: private `franciscovitar/webhook-recovery-lab`, baseline `main` `3fa709523caa5e2cd0ac0f8a09bd2e55119424c7`.
