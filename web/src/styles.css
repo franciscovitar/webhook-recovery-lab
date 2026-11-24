@@ -1159,22 +1159,24 @@ td small {
   }
   .sidebar nav {
     display: flex;
+    flex-wrap: wrap;
     gap: 3px;
-    overflow-x: auto;
+    overflow: visible;
     padding-top: 8px;
   }
   .nav-item {
+    flex: 1 1 calc(33.333% - 3px);
     width: auto;
-    min-width: 74px;
-    min-height: 36px;
+    min-width: 0;
+    min-height: 44px;
     justify-content: center;
-    gap: 5px;
-    padding: 0 8px;
-    font-size: 9px;
+    gap: 7px;
+    padding: 0 6px;
+    font-size: 11px;
   }
   .nav-icon {
-    width: auto;
-    font-size: 14px;
+    width: 17px;
+    font-size: 15px;
   }
   .nav-item.active {
     box-shadow: inset 0 -2px #3caa91;

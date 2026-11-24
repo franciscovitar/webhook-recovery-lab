@@ -22,6 +22,7 @@ The owner authorized local code changes and disposable local PostgreSQL tests. A
 - A permanent-rejection test scenario is prepared at the fixed receiver before its job is made eligible. The worker passes trusted workspace identity to the separately persisted receiver receipt. Restore clears only that workspace's matching receiver fault plan.
 - Same-process Fastify composition for API, loopback-only receiver and bounded event-driven worker scheduler. The worker wakes on accepted ingress/replay and schedules against database due times; idle instances do not poll continuously. Gateway/receiver runtime pools reserve four connections total.
 - React/TypeScript/Vite operations console served from the API origin. It uses persisted read models and real receiver health, provides status/date/search filters and pagination, responsive event/delivery cards, scoped event links, keyboard focus/escape/return behavior for event detail, and discreet recovery test options. The previous `showcase/` is preserved.
+- Mobile navigation wraps all six sections into two visible rows with 44 px targets. Success messages auto-dismiss after six seconds; failures clear stale success notices and show plain-language messages instead of internal error codes.
 - Docker build now includes the Vite source and readable migration assets. Compose waits for both logical databases and supplies the receiver credentials required by the composed API.
 
 ## Verification actually executed
@@ -37,14 +38,14 @@ Runtime observed: Node `v24.22.3`, npm `11.19.1`, Docker `29.9.2`, PostgreSQL `1
 - `npm run demo:scenario -- --run-id local-v3-final2-20261124` — real HTTP scenario passed: duplicate/conflict, bounded 503 retries, lost ACK with one receipt, DEAD/replay to success.
 - Applied and reran both migration manifests against PostgreSQL; reapplication is idempotent.
 - Rebuilt and ran the composed Docker stack locally. The real no-login API path created a cookie workspace, accepted a signed synthetic event, persisted the controlled DEAD state, restored and replayed it to `SUCCEEDED` with two attempts and exactly one receiver receipt. Docker `/ready` and `/` returned 200. Both Docker stacks and their disposable volumes were removed after verification.
+- Local Playwright `1.62.0` with Chromium `156.0.8078.79` exercised the compiled app against disposable PostgreSQL: successful event creation, event inspection, duplicate signed ingress, durable receiver rejection, restore/replay, HTTP 422/200 attempt history, active navigation, filters, loading/error states and independent visitor isolation all passed. Keyboard order, skip link, visible focus, dialog focus containment/Escape/return, and page errors passed. At 390 px and 320 px all six mobile navigation items fit without horizontal page overflow and provide 44 px targets. Browser captures and detailed results are in [the V3 visual QA evidence](qa/v3-visual-2026-11-24/README.md). The integrated browser surface could not initialize (`the gaas-browser node_repl sandbox cannot be disabled`); local Playwright was used with no external service.
 - `git diff --check` — passed.
 
 ## Remaining work and limits
 
-- Real desktop/mobile browser QA with visible navigation, keyboard traversal, focus behavior, active navigation and screenshot-based visual review remains unverified. The browser automation surface returned unavailable during initialization, so no browser pass is claimed. Static type/build checks and HTTP/PostgreSQL behavior are verified.
 - Hosting preflight (provider allowance, billing/overage controls, and exclusive database roles/headroom) remains unverified. Do not provision or deploy under this checkpoint.
 - `showcase/` remains its original browser-only model. The repository remains private; this checkpoint does not claim the V3 UI is published.
 
 ## Next action
 
-Run the remaining real-browser desktop/mobile keyboard and visual QA when the browser surface is available, then fix and document any findings. Hosting remains conditional and outside this local checkpoint. Do not merge, change visibility, provision, or deploy.
+The V3 functional and local desktop/mobile QA is complete. Hosting preflight remains outside this block; do not merge, change visibility, provision, or deploy under this checkpoint.

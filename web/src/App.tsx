@@ -67,6 +67,23 @@ type EventDetail = EventRow & {
   }>;
 };
 
+function userFacingError(message: string): string {
+  const known: Record<string, string> = {
+    origin_rejected: 'We could not verify this request. Reload the page and try again.',
+    workspace_expired: 'This temporary workspace has expired. Start a fresh workspace to continue.',
+    workspace_event_limit: 'This workspace has reached its event limit. Start a fresh workspace to continue.',
+    workspace_mutation_limit: 'This workspace has reached its action limit for this hour. Try again later.',
+    workspace_capacity: 'Temporary workspaces are busy right now. Try again shortly.',
+    receiver_unavailable: 'The fixed test receiver is temporarily unavailable. Try again shortly.',
+    event_not_repeatable: 'This event has no verified payload to resend.',
+    replay_limit_reached: 'This delivery has reached its replay limit.',
+    replay_reason_required: 'Add a reason before replaying this delivery.',
+    request_identity_conflict: 'This request ID was already used with different details.',
+    'Failed to fetch': 'The service could not be reached. Try again shortly.',
+  };
+  return known[message] ?? 'We could not complete that request. Try again shortly.';
+}
+
 const navigation: Array<{ title: Tab; icon: string }> = [
   { title: 'Overview', icon: '◫' },
   { title: 'Events', icon: '◷' },
@@ -160,6 +177,7 @@ function App() {
       const message = cause instanceof Error ? cause.message : 'Could not load workspace';
       if (message === 'workspace_expired') setSession('expired');
       else setError(message);
+      setNotice('');
     }
   }, [search, statusFilter, fromDate, toDate, offset]);
 
@@ -172,6 +190,7 @@ function App() {
     } catch (cause) {
       setSession('error');
       setError(cause instanceof Error ? cause.message : 'Could not start a workspace');
+      setNotice('');
     }
   }, []);
 
@@ -181,6 +200,11 @@ function App() {
   useEffect(() => {
     if (session === 'ready') void refresh();
   }, [refresh, session]);
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(''), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
   useEffect(() => {
     if (session !== 'ready' || counts.pending === 0) return;
     let polls = 0;
@@ -238,6 +262,7 @@ function App() {
       setTab(scenario === 'permanent_failure' ? 'Recovery' : 'Events');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'The event was not accepted');
+      setNotice('');
     } finally {
       setBusy(false);
     }
@@ -250,11 +275,14 @@ function App() {
       setDetail(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not open event');
+      setNotice('');
     }
   }
 
   async function duplicateEvent(eventId: string) {
     setBusy(true);
+    setError('');
+    setNotice('');
     try {
       const result = await request<{ status: string }>(`/api/demo/events/${eventId}/duplicate`, {
         method: 'POST',
@@ -263,6 +291,7 @@ function App() {
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not resend event');
+      setNotice('');
     } finally {
       setBusy(false);
     }
@@ -281,6 +310,7 @@ function App() {
   async function restoreAndReplay(job: RecoveryRow) {
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       const headers = { 'content-type': 'application/json' };
       await request(`/api/demo/recovery/${job.id}/restore`, { method: 'POST' });
@@ -298,6 +328,7 @@ function App() {
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Recovery action failed');
+      setNotice('');
     } finally {
       setBusy(false);
     }
@@ -316,7 +347,7 @@ function App() {
         <div className="state-mark">◈</div>
         <h1>{session === 'expired' ? 'This sandbox has expired' : 'The sandbox could not start'}</h1>
         <p>Your event history is temporary. Start a fresh isolated workspace to continue.</p>
-        {error && <p className="error-text">{error}</p>}
+        {error && <p className="error-text">{userFacingError(error)}</p>}
         <button className="button button-primary" onClick={() => void startSession(true)}>
           Start a fresh workspace
         </button>
@@ -405,7 +436,7 @@ function App() {
         <main className="content" id="main-content">
           {error && (
             <div className="notice notice-error" role="alert">
-              <span>{error}</span>
+              <span>{userFacingError(error)}</span>
               <button onClick={() => setError('')} aria-label="Dismiss error">
                 ×
               </button>
