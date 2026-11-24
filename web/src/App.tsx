@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type Tab = 'Overview' | 'Events' | 'Deliveries' | 'Recovery' | 'Endpoints' | 'Activity';
 type JobState = 'PENDING' | 'LEASED' | 'SUCCEEDED' | 'DEAD';
@@ -181,12 +181,14 @@ function Badge({ state }: { state: JobState }) {
 function App() {
   const [tab, setTab] = useState<Tab>('Overview');
   const [session, setSession] = useState<'starting' | 'ready' | 'expired' | 'error'>('starting');
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [counts, setCounts] = useState<Counts>({ received: 0, delivered: 0, pending: 0, failed: 0 });
   const [events, setEvents] = useState<EventRow[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [activity, setActivity] = useState<ActivityRow[]>([]);
   const [recovery, setRecovery] = useState<RecoveryRow[]>([]);
   const [detail, setDetail] = useState<EventDetail | null>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [fromDate, setFromDate] = useState('');
@@ -222,6 +224,7 @@ function App() {
           request<{ endpoints: Array<{ status: string }> }>('/api/demo/endpoints'),
         ]);
       setCounts(nextCounts);
+      setDataLoaded(true);
       setEvents(nextEvents.events);
       setEventTotal(nextEvents.total);
       setRecovery(nextRecovery.dead_jobs);
@@ -240,6 +243,9 @@ function App() {
 
   const startSession = useCallback(async (fresh = false) => {
     setSession('starting');
+    setDataLoaded(false);
+    setError('');
+    setNotice('');
     try {
       await request(fresh ? '/api/demo/session/new' : '/api/demo/session', { method: 'POST' });
       setSession('ready');
@@ -315,6 +321,11 @@ function App() {
       });
       setNotice('Evento recibido y verificado. Consultá el estado de la entrega.');
       setOrderId('');
+      setSearch('');
+      setStatusFilter('');
+      setFromDate('');
+      setToDate('');
+      setOffset(0);
       await refresh();
       setTab(scenario === 'permanent_failure' ? 'Recovery' : 'Events');
     } catch (cause) {
@@ -329,6 +340,7 @@ function App() {
     const eventId = typeof eventOrId === 'string' ? eventOrId : eventOrId.event_id;
     try {
       const next = await request<EventDetail>(`/api/demo/events/${eventId}`);
+      detailTrigger.current = document.activeElement as HTMLElement | null;
       setDetail(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not open event');
@@ -344,7 +356,11 @@ function App() {
       const result = await request<{ status: string }>(`/api/demo/events/${eventId}/duplicate`, {
         method: 'POST',
       });
-      setNotice(result.status === 'duplicate' ? 'Duplicado detectado: no se creó otra entrega.' : 'Reenvío procesado. Consultá el historial del evento.');
+      setNotice(
+        result.status === 'duplicate'
+          ? 'Duplicado detectado: no se creó otra entrega.'
+          : 'Reenvío procesado. Consultá el historial del evento.',
+      );
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not resend event');
@@ -354,7 +370,10 @@ function App() {
     }
   }
 
-  const closeDetail = useCallback(() => setDetail(null), []);
+  const closeDetail = useCallback(() => {
+    setDetail(null);
+    window.requestAnimationFrame(() => detailTrigger.current?.focus());
+  }, []);
 
   function openSendForm() {
     setTab('Overview');
@@ -391,9 +410,20 @@ function App() {
     }
   }
 
-  if (session === 'starting')
+  if (session === 'ready' && !dataLoaded && error)
     return (
       <main className="center-state">
+        <div className="state-mark" aria-hidden="true">!</div>
+        <h1>No pudimos cargar los datos</h1>
+        <p role="alert">{userFacingError(error)}</p>
+        <button className="button button-primary" onClick={() => void refresh()}>
+          Volver a intentar
+        </button>
+      </main>
+    );
+  if (session === 'starting' || (session === 'ready' && !dataLoaded))
+    return (
+      <main className="center-state" role="status" aria-busy="true">
         <div className="loader" aria-hidden="true" />
         <h1>Preparando tu espacio de prueba…</h1>
         <p>El servicio gratuito puede tardar alrededor de un minuto en iniciar. No necesitás registrarte.</p>
@@ -414,17 +444,17 @@ function App() {
 
   return (
     <div className="app-shell">
-      <a className="skip-link" href="#main-content">
+      <a className="skip-link" href="#main-content" tabIndex={detail ? -1 : undefined}>
         Ir al contenido principal
       </a>
-      <aside className="sidebar">
+      <aside className="sidebar" inert={Boolean(detail)}>
         <a
           className="brand"
           href="#overview"
           onClick={() => setTab('Overview')}
           aria-label="Inicio de Webhook Recovery Lab"
         >
-          <span className="brand-mark">↗</span>
+          <span className="brand-mark" aria-hidden="true">↗</span>
           <span>
             Webhook<span className="brand-light"> Recovery</span>
             <small>GESTIÓN DE ENTREGAS</small>
@@ -467,7 +497,7 @@ function App() {
         </a>
       </aside>
 
-      <div className="main-column">
+      <div className="main-column" inert={Boolean(detail)}>
         <header className="topbar">
           <div className="breadcrumbs">
             <span>Mi espacio</span>
@@ -588,7 +618,9 @@ function App() {
                 </div>
                 <div className="form-row">
                   <label className="field">
-                    Referencia del pedido <span className="optional">opcional</span>
+                    <span>
+                      Referencia del pedido <span className="optional">opcional</span>
+                    </span>
                     <input
                       id="order-reference"
                       value={orderId}
@@ -605,7 +637,7 @@ function App() {
                         onChange={(event) => setScenario(event.target.value as typeof scenario)}
                       >
                         <option value="normal">Entrega correcta</option>
-                        <option value="permanent_failure">Fallo controlado · probar recuperación</option>
+                        <option value="permanent_failure">Fallo controlado</option>
                       </select>
                     </label>
                   </div>
@@ -619,7 +651,7 @@ function App() {
                 </div>
                 <p className="scenario-hint">
                   {scenario === 'normal'
-                    ? 'El receptor aceptará el pedido en condiciones normales.'
+                    ? 'Se genera una referencia si no ingresás ninguna. El receptor aceptará el pedido en condiciones normales.'
                     : 'El receptor rechazará este evento de forma controlada. Después podrás restaurarlo y reenviarlo en Recuperación.'}
                 </p>
                 <div className="secure-note">
@@ -642,7 +674,9 @@ function App() {
                 <div>
                   <div className="eyebrow">REGISTRO DE ENTRADA</div>
                   <h1>Eventos</h1>
-                  <p>Cada evento es un aviso recibido por el sistema. Consultá su contenido y el estado de entrega.</p>
+                  <p>
+                    Cada evento es un aviso recibido por el sistema. Consultá su contenido y el estado de entrega.
+                  </p>
                 </div>
                 <button className="button button-primary" onClick={openSendForm}>
                   ＋ Crear evento de prueba
@@ -790,7 +824,7 @@ function App() {
                     <article className="panel recovery-card" key={job.id}>
                       <div className="recovery-title">
                         <div>
-                          <div className="eyebrow">PEDIDO</div>
+                          <div className="eyebrow">ENTREGA QUE REQUIERE ATENCIÓN</div>
                           <h2>{orderLabel(job.order_id)}</h2>
                         </div>
                         <Badge state="DEAD" />
@@ -967,7 +1001,7 @@ function Stat({
     <article className="stat-card">
       <div className="stat-top">
         <span>{label}</span>
-        <span className={`stat-icon ${tone}`}>{icon}</span>
+        <span className={`stat-icon ${tone}`} aria-hidden="true">{icon}</span>
       </div>
       <strong>{value.toLocaleString('es-AR')}</strong>
       <small>{foot}</small>
@@ -1062,7 +1096,10 @@ function DeliveryTable({
         <h2>Envíos al receptor</h2>
       </div>
       {deliveries.length === 0 ? (
-        <EmptyState title="Todavía no hay entregas" body="Envíos al receptor appear after an event is accepted." />
+        <EmptyState
+          title="Todavía no hay entregas"
+          body="Cada evento aceptado genera una entrega que podés seguir desde acá."
+        />
       ) : (
         <div className="table-scroll">
           <table>
@@ -1096,7 +1133,9 @@ function DeliveryTable({
                       : delivery.status === 'PENDING'
                         ? dateTime(delivery.next_attempt_at)
                         : 'Todavía sin intentos'}
-                    {delivery.latest_error_class && <small>{errorLabel(delivery.latest_error_class)}</small>}
+                    {delivery.latest_error_class && (
+                      <small>{errorLabel(delivery.latest_error_class)}</small>
+                    )}
                   </td>
                   <td data-label="Intentos">{delivery.total_attempts}</td>
                 </tr>
@@ -1137,7 +1176,6 @@ function EventDialog({
   error: string;
 }) {
   useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
     const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
     const focusables = () =>
       Array.from(
@@ -1162,7 +1200,6 @@ function EventDialog({
     window.addEventListener('keydown', closeOnEscape);
     return () => {
       window.removeEventListener('keydown', closeOnEscape);
-      previous?.focus();
     };
   }, [onClose]);
   return (
@@ -1198,7 +1235,9 @@ function EventDialog({
         >
           Reenviar el mismo evento
         </button>
-        <p className="scenario-hint">Comprobá que enviar los mismos datos no genere otra entrega. El sistema detecta duplicados.</p>
+        <p className="scenario-hint">
+          Comprobá que enviar los mismos datos no genere otra entrega. El sistema detecta duplicados.
+        </p>
         {notice && <p className="notice notice-success" role="status">{notice}</p>}
         {error && <p className="notice notice-error" role="alert">{userFacingError(error)}</p>}
         <details className="detail-block technical-details">
@@ -1228,7 +1267,9 @@ function EventDialog({
                       {dateTime(attempt.started_at)} · Ciclo {attempt.replay_generation + 1}
                     </small>
                   </div>
-                  <span>{attempt.http_status ? httpLabel(attempt.http_status) : attemptLabel(attempt.result)}</span>
+                  <span>
+                    {attempt.http_status ? httpLabel(attempt.http_status) : attemptLabel(attempt.result)}
+                  </span>
                   <small>
                     {attempt.latency_ms === null ? '—' : `${attempt.latency_ms} ms`} ·{' '}
                     {attempt.error_class ? errorLabel(attempt.error_class) : attemptLabel(attempt.result)}
