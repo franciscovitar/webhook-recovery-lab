@@ -7,7 +7,7 @@ Portfolio policy: `AI/governance/PORTFOLIO_DELIVERY_POLICY.md`.
 Cost policy: `AI/governance/INFRASTRUCTURE_COST_GUARDRAIL.md`.
 Architecture: [PRODUCT_ARCHITECTURE_V3.md](PRODUCT_ARCHITECTURE_V3.md).
 
-The owner authorized local code changes and disposable local PostgreSQL tests. Additional spend: US$0. No cloud resources, hosted CI diagnostics, deployment, main merge, repository visibility change, or Library Network modification were performed.
+The owner authorized a Free-only QA deployment using the personal Neon Free organization and Render Free, with maximum additional spend US$0. The deployment and online QA are complete on this feature branch. No Aiven or Library Network changes, Vercel Production changes, main merge, or repository visibility change were performed.
 
 ## Implemented in this checkpoint
 
@@ -41,11 +41,18 @@ Runtime observed: Node `v24.22.3`, npm `11.19.1`, Docker `29.9.2`, PostgreSQL `1
 - Local Playwright `1.62.0` with Chromium `156.0.8078.79` exercised the compiled app against disposable PostgreSQL: successful event creation, event inspection, duplicate signed ingress, durable receiver rejection, restore/replay, HTTP 422/200 attempt history, active navigation, filters, loading/error states and independent visitor isolation all passed. Keyboard order, skip link, visible focus, dialog focus containment/Escape/return, and page errors passed. At 390 px and 320 px all six mobile navigation items fit without horizontal page overflow and provide 44 px targets. Browser captures and detailed results are in [the V3 visual QA evidence](qa/v3-visual-2026-11-24/README.md). The integrated browser surface could not initialize (`the gaas-browser node_repl sandbox cannot be disabled`); local Playwright was used with no external service.
 - `git diff --check` — passed.
 
-## Remaining work and limits
+## Hosting and online QA status
 
-- Hosting preflight completed read-only and persisted in [the infrastructure preflight record](hosting/INFRASTRUCTURE_PREFLIGHT_2026-11-24.md). Render currently shows USD 0.00 month-to-date, no card, 10.08/750 Free instance hours, 107 MB/5 GB bandwidth and 4/500 build minutes. Aiven is Free with no card, but database grants/connections cannot be checked because the existing Library Network IP allowlist blocks the SQL editor; observed service metrics also show about 75% memory use. This is a no-go: no service, database, role, migration, deployment, or Library Network setting was changed.
-- `showcase/` remains its original browser-only model. The repository remains private; this checkpoint does not claim the V3 UI is published.
+The Free-only infrastructure preflight, deployment and online QA are complete. Full evidence, usage snapshot, resource identifiers, migration results and test outcomes are in [the hosting deployment status](hosting/NEON_RENDER_DEPLOYMENT_STATUS_2026-11-24.md).
+
+- One Render Free service runs V3 on `feat/webhook-operations-v3`; auto-deploy is off. A documentation-only descendant of the validated code commit was deployed.
+- One personal Neon Free project hosts the two logical databases. Runtime roles are restricted to their matching databases; cross-database CONNECT was denied in SQL checks.
+- Online checks passed for no-login access, signed ingress and worker delivery, exact-payload dedupe, durable failure/replay, PostgreSQL persistence, independent visitor workspaces, Render+Neon cold start and recovery of a persisted pending job after a controlled redeploy.
+- The 390 × 844 device-mode layout rendered. No application code change was needed.
+- Render's first cold Neon connection produced one deferred cleanup warning; API startup, subsequent requests and worker recovery succeeded automatically. No ping or scheduled service was added.
+- Current deployment and resource costs remain within Free plans; budget spent is US$0.00. No post-deployment billing-counter refresh was available through Render's integration; the verified no-card/free-plan gate and the pre-provisioning billing snapshot are recorded in the hosting report.
+- Aiven, Library Network, Vercel Production, showcase, repository privacy, and `main` remain untouched.
 
 ## Next action
 
-The V3 functional and local desktop/mobile QA is complete. Hosting is blocked pending an owner decision: authorize a temporary Aiven allowlist entry for read-only isolation/capacity inspection, authorize a separately gated project in the personal Neon Free organization, or keep the local demo/showcase. The Neon Vercel-managed Launch organization was not used. Do not change repository visibility, merge to main, change Vercel Production, or provision until the applicable path is explicitly authorized and its no-cost/isolation gates pass.
+The QA URL is available at https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com. Review the linked hosting report. Do not change repository visibility, merge into `main`, promote to Production, or change other infrastructure without owner approval.
