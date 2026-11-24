@@ -24,6 +24,8 @@ export interface WorkspaceEventFilter {
   query?: string;
   limit: number;
   offset: number;
+  from?: Date;
+  to?: Date;
 }
 
 const statusValues = new Set<WorkspaceJobState>(['PENDING', 'LEASED', 'SUCCEEDED', 'DEAD']);
@@ -75,6 +77,14 @@ export class PostgresWorkspaceQueries {
         `(e.event_id::text ILIKE $${values.length} OR e.payload->'data'->>'order_id' ILIKE $${values.length})`,
       );
     }
+    if (filter.from) {
+      values.push(filter.from);
+      conditions.push(`e.received_at >= $${values.length}`);
+    }
+    if (filter.to) {
+      values.push(filter.to);
+      conditions.push(`e.received_at < $${values.length}`);
+    }
     const where = conditions.join(' AND ');
     const total = await this.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM inbox_events e
@@ -98,7 +108,7 @@ export class PostgresWorkspaceQueries {
 
   async event(workspaceId: string, eventId: string) {
     const result = await this.pool.query<WorkspaceEventRow>(
-      `SELECT e.id, e.event_id, e.event_type, e.occurred_at, e.received_at, e.payload,
+      `SELECT e.id, e.event_id, e.event_type, e.occurred_at, e.received_at, e.payload, e.signature_verified,
               j.id AS job_id, j.delivery_id, j.status, j.total_attempts,
               j.attempts_in_generation, j.replay_generation, j.next_attempt_at,
               j.last_error_class
@@ -125,6 +135,18 @@ export class PostgresWorkspaceQueries {
       [row.job_id],
     );
     return { ...row, attempts: attempts.rows };
+  }
+
+  async duplicateSource(
+    workspaceId: string,
+    eventId: string,
+  ): Promise<{ raw_body: Buffer; signature_verified: boolean } | null> {
+    const result = await this.pool.query<{ raw_body: Buffer | null; signature_verified: boolean }>(
+      `SELECT raw_body, signature_verified FROM inbox_events WHERE workspace_id = $1 AND event_id = $2`,
+      [workspaceId, eventId],
+    );
+    const row = result.rows[0];
+    return row?.raw_body ? { raw_body: row.raw_body, signature_verified: row.signature_verified } : null;
   }
 
   async recoveryJob(workspaceId: string, jobId: string) {

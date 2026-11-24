@@ -22,12 +22,14 @@ export interface AppOptions {
   guestWorkspaces?: {
     create(): Promise<GuestAdmission>;
     findActive(token: unknown): Promise<GuestWorkspace | null>;
+    consumeMutation?(workspaceId: string): Promise<boolean>;
   };
   workspaceQueries?: Pick<
     PostgresWorkspaceQueries,
     | 'overview'
     | 'events'
     | 'event'
+    | 'duplicateSource'
     | 'recoveryJob'
     | 'deadJobs'
     | 'testEventByRequest'
@@ -37,6 +39,7 @@ export interface AppOptions {
   workspaceSigning?: { keyId: string; secret: string };
   deliveryRecovery?: Pick<DeliveryStore, 'replayDead'>;
   receiverRecovery?: {
+    ping?(): Promise<void>;
     preparePermanentFailure(deliveryId: string, workspaceId: string): Promise<void>;
     restoreFaultPlan(deliveryId: string, workspaceId: string): Promise<boolean>;
   };
@@ -44,6 +47,7 @@ export interface AppOptions {
   allowLegacyIngress?: boolean;
   onAccepted?: () => void;
   dependencies?: Array<{ ping(): Promise<void> }>;
+  onWorkspaceSession?: () => Promise<void>;
   webRoot?: string;
   expectedOrigin?: string;
 }
@@ -111,6 +115,7 @@ export function buildApp({
   allowLegacyIngress = true,
   onAccepted,
   dependencies = [],
+  onWorkspaceSession,
   webRoot,
   expectedOrigin,
 }: AppOptions): FastifyInstance {
@@ -190,12 +195,14 @@ export function buildApp({
           event,
           rawBody,
           payloadSha256: sha256Hex(rawBody),
+          signatureVerified: true,
         });
         if (outcome === 'conflict') {
           request.log.warn({ event_id: event.event_id }, 'webhook identity reused with different payload');
           return reply.code(409).send({ error: 'event_identity_conflict' });
         }
         if (outcome === 'capacity') return reply.code(429).send({ error: 'workspace_event_limit' });
+        if (outcome === 'expired') return reply.code(401).send({ error: 'workspace_expired' });
         if (outcome === 'accepted') onAccepted?.();
         return reply.code(202).send({ event_id: event.event_id, status: outcome });
       } catch (error) {
@@ -220,11 +227,20 @@ export function buildApp({
       );
     };
     const requireMutationOrigin = (request: FastifyRequest) => sameOrigin(request, expectedOrigin);
+    const mutationDenied = async (request: FastifyRequest, workspaceId: string) => {
+      if (!guestWorkspaces.consumeMutation || (await guestWorkspaces.consumeMutation(workspaceId)))
+        return null;
+      const active = await resolveWorkspace(request);
+      return active
+        ? { status: 429, error: 'workspace_mutation_limit' }
+        : { status: 401, error: 'workspace_expired' };
+    };
 
     app.post('/api/demo/session', async (request, reply) => {
       if (!requireMutationOrigin(request)) return reply.code(403).send({ error: 'origin_rejected' });
       const current = await resolveWorkspace(request);
       if (current) return { status: 'resumed', expires_at: current.expires_at.toISOString() };
+      await onWorkspaceSession?.().catch(() => undefined);
       const admission = await guestWorkspaces.create();
       if (admission.status === 'capacity') return reply.code(429).send({ error: 'workspace_capacity' });
       setSessionCookie(reply, admission.token);
@@ -235,6 +251,7 @@ export function buildApp({
 
     app.post('/api/demo/session/new', async (request, reply) => {
       if (!requireMutationOrigin(request)) return reply.code(403).send({ error: 'origin_rejected' });
+      await onWorkspaceSession?.().catch(() => undefined);
       const admission = await guestWorkspaces.create();
       if (admission.status === 'capacity') return reply.code(429).send({ error: 'workspace_capacity' });
       setSessionCookie(reply, admission.token);
@@ -256,6 +273,16 @@ export function buildApp({
       const status = query['status'] === undefined ? undefined : parseWorkspaceJobState(query['status']);
       if (query['status'] !== undefined && !status) return reply.code(400).send({ error: 'invalid_status' });
       const search = typeof query['q'] === 'string' ? query['q'].slice(0, 80) : undefined;
+      const parseDate = (value: unknown): Date | undefined | null => {
+        if (value === undefined) return undefined;
+        if (typeof value !== 'string') return null;
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value ? null : parsed;
+      };
+      const from = parseDate(query['from']);
+      const to = parseDate(query['to']);
+      if (from === null || to === null || (from && to && from >= to))
+        return reply.code(400).send({ error: 'invalid_date_range' });
       const limit = typeof query['limit'] === 'string' ? Number(query['limit']) : 25;
       const offset = typeof query['offset'] === 'string' ? Number(query['offset']) : 0;
       if (
@@ -271,6 +298,8 @@ export function buildApp({
       return workspaceQueries.events(workspace.id, {
         ...(status ? { status } : {}),
         ...(search ? { query: search } : {}),
+        ...(from ? { from } : {}),
+        ...(to ? { to } : {}),
         limit,
         offset,
       });
@@ -284,6 +313,39 @@ export function buildApp({
       const event = await workspaceQueries.event(workspace.id, request.params.eventId);
       return event ? event : reply.code(404).send({ error: 'event_not_found' });
     });
+
+    app.post<{ Params: { eventId: string } }>(
+      '/api/demo/events/:eventId/duplicate',
+      async (request, reply) => {
+        if (!requireMutationOrigin(request)) return reply.code(403).send({ error: 'origin_rejected' });
+        const workspace = await resolveWorkspace(request);
+        if (!workspace) return reply.code(401).send({ error: 'workspace_expired' });
+        if (!/^[0-9a-f-]{36}$/i.test(request.params.eventId))
+          return reply.code(404).send({ error: 'event_not_found' });
+        const source = await workspaceQueries.duplicateSource(workspace.id, request.params.eventId);
+        if (!source?.signature_verified) return reply.code(404).send({ error: 'event_not_repeatable' });
+        const denied = await mutationDenied(request, workspace.id);
+        if (denied) return reply.code(denied.status).send({ error: denied.error });
+        const timestamp = String(Math.trunc(nowMs() / 1000));
+        const ingress = await app.inject({
+          method: 'POST',
+          url: '/v1/webhooks/sandbox',
+          payload: source.raw_body,
+          headers: {
+            'content-type': 'application/json',
+            'x-wrl-key-id': workspaceSigning.keyId,
+            'x-wrl-timestamp': timestamp,
+            'x-wrl-signature': signPayload(source.raw_body, timestamp, workspaceSigning.secret),
+            'x-wrl-internal-dispatch': internalDispatchSecret,
+            'x-wrl-internal-workspace': workspace.id,
+          },
+        });
+        if (ingress.statusCode !== 202) return reply.code(ingress.statusCode).send(ingress.json());
+        return reply
+          .code(202)
+          .send({ ...(ingress.json() as Record<string, unknown>), signature_accepted: true });
+      },
+    );
 
     app.post('/api/demo/test-events', async (request, reply) => {
       if (!requireMutationOrigin(request)) return reply.code(403).send({ error: 'origin_rejected' });
@@ -300,6 +362,8 @@ export function buildApp({
           .code(202)
           .send({ event_id: previous.event_id, status: 'duplicate', signature_accepted: true });
       }
+      const denied = await mutationDenied(request, workspace.id);
+      if (denied) return reply.code(denied.status).send({ error: denied.error });
       const event = sandboxEventSchema.safeParse({
         event_id: parsedBody.data.request_id,
         type: 'order.created',
@@ -366,6 +430,35 @@ export function buildApp({
       return { deliveries: await workspaceQueries.deliveries(workspace.id) };
     });
 
+    app.get('/api/demo/endpoints', async (request, reply) => {
+      const workspace = await resolveWorkspace(request);
+      if (!workspace) return reply.code(401).send({ error: 'workspace_expired' });
+      try {
+        await receiverRecovery?.ping?.();
+        return {
+          endpoints: [
+            {
+              id: 'orders',
+              name: 'Orders receiver',
+              status: 'healthy',
+              checked_at: new Date(nowMs()).toISOString(),
+            },
+          ],
+        };
+      } catch {
+        return {
+          endpoints: [
+            {
+              id: 'orders',
+              name: 'Orders receiver',
+              status: 'unavailable',
+              checked_at: new Date(nowMs()).toISOString(),
+            },
+          ],
+        };
+      }
+    });
+
     app.get('/api/demo/activity', async (request, reply) => {
       const workspace = await resolveWorkspace(request);
       if (!workspace) return reply.code(401).send({ error: 'workspace_expired' });
@@ -380,6 +473,8 @@ export function buildApp({
         const job = await workspaceQueries.recoveryJob(workspace.id, request.params.jobId);
         if (!job) return reply.code(404).send({ error: 'recovery_job_not_found' });
         if (job.status !== 'DEAD') return reply.code(409).send({ error: 'job_not_dead' });
+        const denied = await mutationDenied(request, workspace.id);
+        if (denied) return reply.code(denied.status).send({ error: denied.error });
         const changed = await receiverRecovery.restoreFaultPlan(job.delivery_id, workspace.id);
         return { status: changed ? 'receiver_restored' : 'receiver_already_restored' };
       });
@@ -409,6 +504,10 @@ export function buildApp({
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : '';
+          if (message.includes('workspace has expired'))
+            return reply.code(401).send({ error: 'workspace_expired' });
+          if (message.includes('mutation limit'))
+            return reply.code(429).send({ error: 'workspace_mutation_limit' });
           if (message.includes('limit reached'))
             return reply.code(409).send({ error: 'replay_limit_reached' });
           if (message.includes('request ID'))

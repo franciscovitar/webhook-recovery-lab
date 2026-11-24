@@ -54,6 +54,7 @@ type ActivityRow = {
   latency_ms: number | null;
 };
 type EventDetail = EventRow & {
+  signature_verified: boolean;
   attempts: Array<{
     attempt_sequence: number;
     replay_generation: number;
@@ -114,6 +115,10 @@ function App() {
   const [detail, setDetail] = useState<EventDetail | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [offset, setOffset] = useState(0);
+  const [eventTotal, setEventTotal] = useState(0);
   const [orderId, setOrderId] = useState('');
   const [scenario, setScenario] = useState<'normal' | 'permanent_failure'>('normal');
   const [replayReason, setReplayReason] = useState<Record<string, string>>({});
@@ -121,24 +126,34 @@ function App() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [receiverReady, setReceiverReady] = useState<boolean | null>(null);
+  const [pollingPaused, setPollingPaused] = useState(false);
+  const [refreshGeneration, setRefreshGeneration] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
       const query = new URLSearchParams();
       if (search.trim()) query.set('q', search.trim());
       if (statusFilter) query.set('status', statusFilter);
-      const [nextCounts, nextEvents, nextRecovery, nextDeliveries, nextActivity] = await Promise.all([
-        request<Counts>('/api/demo/overview'),
-        request<{ total: number; events: EventRow[] }>(`/api/demo/events?${query.toString()}`),
-        request<{ dead_jobs: RecoveryRow[] }>('/api/demo/recovery'),
-        request<{ deliveries: DeliveryRow[] }>('/api/demo/deliveries'),
-        request<{ activity: ActivityRow[] }>('/api/demo/activity'),
-      ]);
+      if (fromDate) query.set('from', new Date(`${fromDate}T00:00:00.000Z`).toISOString());
+      if (toDate)
+        query.set('to', new Date(new Date(`${toDate}T00:00:00.000Z`).valueOf() + 86_400_000).toISOString());
+      query.set('offset', String(offset));
+      const [nextCounts, nextEvents, nextRecovery, nextDeliveries, nextActivity, endpointStatus] =
+        await Promise.all([
+          request<Counts>('/api/demo/overview'),
+          request<{ total: number; events: EventRow[] }>(`/api/demo/events?${query.toString()}`),
+          request<{ dead_jobs: RecoveryRow[] }>('/api/demo/recovery'),
+          request<{ deliveries: DeliveryRow[] }>('/api/demo/deliveries'),
+          request<{ activity: ActivityRow[] }>('/api/demo/activity'),
+          request<{ endpoints: Array<{ status: string }> }>('/api/demo/endpoints'),
+        ]);
       setCounts(nextCounts);
       setEvents(nextEvents.events);
+      setEventTotal(nextEvents.total);
       setRecovery(nextRecovery.dead_jobs);
       setDeliveries(nextDeliveries.deliveries);
       setActivity(nextActivity.activity);
+      setReceiverReady(endpointStatus.endpoints[0]?.status === 'healthy');
       setSession('ready');
       setError('');
     } catch (cause) {
@@ -146,7 +161,7 @@ function App() {
       if (message === 'workspace_expired') setSession('expired');
       else setError(message);
     }
-  }, [search, statusFilter]);
+  }, [search, statusFilter, fromDate, toDate, offset]);
 
   const startSession = useCallback(async (fresh = false) => {
     setSession('starting');
@@ -168,22 +183,32 @@ function App() {
   }, [refresh, session]);
   useEffect(() => {
     if (session !== 'ready' || counts.pending === 0) return;
-    const poll = () => {
-      if (document.visibilityState === 'visible') void refresh();
+    let polls = 0;
+    let timer = 0;
+    setPollingPaused(false);
+    const schedule = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (polls >= 60) {
+        setPollingPaused(true);
+        return;
+      }
+      timer = window.setTimeout(() => {
+        if (document.visibilityState !== 'visible') return;
+        polls++;
+        void refresh().finally(schedule);
+      }, 5000);
     };
-    const timer = window.setInterval(poll, 4000);
-    document.addEventListener('visibilitychange', poll);
+    const visibilityChanged = () => {
+      if (document.visibilityState === 'visible') schedule();
+      else window.clearTimeout(timer);
+    };
+    schedule();
+    document.addEventListener('visibilitychange', visibilityChanged);
     return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', poll);
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', visibilityChanged);
     };
-  }, [counts.pending, refresh, session]);
-
-  useEffect(() => {
-    void fetch('/ready')
-      .then((response) => setReceiverReady(response.ok))
-      .catch(() => setReceiverReady(false));
-  }, []);
+  }, [counts.pending, refresh, refreshGeneration, session]);
 
   const deliveredPercent = useMemo(
     () =>
@@ -218,13 +243,39 @@ function App() {
     }
   }
 
-  async function openDetail(event: EventRow) {
+  async function openDetail(eventOrId: EventRow | string) {
+    const eventId = typeof eventOrId === 'string' ? eventOrId : eventOrId.event_id;
     try {
-      const next = await request<EventDetail>(`/api/demo/events/${event.event_id}`);
+      const next = await request<EventDetail>(`/api/demo/events/${eventId}`);
       setDetail(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not open event');
     }
+  }
+
+  async function duplicateEvent(eventId: string) {
+    setBusy(true);
+    try {
+      const result = await request<{ status: string }>(`/api/demo/events/${eventId}/duplicate`, {
+        method: 'POST',
+      });
+      setNotice(`Identical signed payload reached ingress: ${result.status}.`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not resend event');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const closeDetail = useCallback(() => setDetail(null), []);
+
+  function openSendForm() {
+    setTab('Overview');
+    window.setTimeout(() => {
+      document.getElementById('send-event')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('order-reference')?.focus();
+    }, 0);
   }
 
   async function restoreAndReplay(job: RecoveryRow) {
@@ -274,6 +325,9 @@ function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <aside className="sidebar">
         <a
           className="brand"
@@ -335,7 +389,14 @@ function App() {
             <span className="environment">
               <span className="live-dot" /> Demo environment
             </span>
-            <button className="button button-quiet" onClick={() => void refresh()} aria-label="Refresh data">
+            <button
+              className="button button-quiet"
+              onClick={() => {
+                setRefreshGeneration((value) => value + 1);
+                void refresh();
+              }}
+              aria-label="Refresh data"
+            >
               ↻ <span>Refresh</span>
             </button>
           </div>
@@ -358,6 +419,11 @@ function App() {
               </button>
             </div>
           )}
+          {pollingPaused && (
+            <p className="polling-note" role="status">
+              Automatic refresh paused after five minutes. Use Refresh to check again.
+            </p>
+          )}
           {tab === 'Overview' && (
             <>
               <div className="page-heading">
@@ -366,12 +432,7 @@ function App() {
                   <h1>Webhook overview</h1>
                   <p>Signed events, delivery health, and recovery in one place.</p>
                 </div>
-                <button
-                  className="button button-primary"
-                  onClick={() =>
-                    document.getElementById('send-event')?.scrollIntoView({ behavior: 'smooth' })
-                  }
-                >
+                <button className="button button-primary" onClick={openSendForm}>
                   <span>＋</span> Send test event
                 </button>
               </div>
@@ -408,22 +469,26 @@ function App() {
                   <label className="field">
                     Order reference <span className="optional">optional</span>
                     <input
+                      id="order-reference"
                       value={orderId}
                       onChange={(event) => setOrderId(event.target.value)}
                       placeholder="Generated automatically"
                       maxLength={64}
                     />
                   </label>
-                  <label className="field">
-                    Test scenario
-                    <select
-                      value={scenario}
-                      onChange={(event) => setScenario(event.target.value as typeof scenario)}
-                    >
-                      <option value="normal">Successful delivery</option>
-                      <option value="permanent_failure">Receiver rejects · recovery test</option>
-                    </select>
-                  </label>
+                  <details className="scenario-options">
+                    <summary>Recovery test options</summary>
+                    <label className="field">
+                      Test scenario
+                      <select
+                        value={scenario}
+                        onChange={(event) => setScenario(event.target.value as typeof scenario)}
+                      >
+                        <option value="normal">Successful delivery</option>
+                        <option value="permanent_failure">Receiver rejects · recovery test</option>
+                      </select>
+                    </label>
+                  </details>
                   <button
                     className="button button-primary send-button"
                     disabled={busy}
@@ -465,13 +530,22 @@ function App() {
                   <input
                     aria-label="Search events"
                     value={search}
-                    onChange={(event) => setSearch(event.target.value)}
+                    onChange={(event) => {
+                      setSearch(event.target.value);
+                      setOffset(0);
+                    }}
                     placeholder="Search order or event ID"
                   />
                 </label>
                 <label className="filter-select">
                   <span className="sr-only">Filter by status</span>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                  <select
+                    value={statusFilter}
+                    onChange={(event) => {
+                      setStatusFilter(event.target.value);
+                      setOffset(0);
+                    }}
+                  >
                     <option value="">All statuses</option>
                     <option value="SUCCEEDED">Delivered</option>
                     <option value="PENDING">Pending retry</option>
@@ -479,6 +553,40 @@ function App() {
                     <option value="DEAD">Failed</option>
                   </select>
                 </label>
+                <label className="date-filter">
+                  From{' '}
+                  <input
+                    type="date"
+                    value={fromDate}
+                    onChange={(event) => {
+                      setFromDate(event.target.value);
+                      setOffset(0);
+                    }}
+                  />
+                </label>
+                <label className="date-filter">
+                  To{' '}
+                  <input
+                    type="date"
+                    value={toDate}
+                    onChange={(event) => {
+                      setToDate(event.target.value);
+                      setOffset(0);
+                    }}
+                  />
+                </label>
+                {(fromDate || toDate) && (
+                  <button
+                    className="text-button"
+                    onClick={() => {
+                      setFromDate('');
+                      setToDate('');
+                      setOffset(0);
+                    }}
+                  >
+                    Clear dates
+                  </button>
+                )}
               </div>
               <EventTable
                 events={events}
@@ -486,6 +594,29 @@ function App() {
                 title="All events"
                 empty="No events match these filters."
               />
+              <div className="pagination" aria-label="Event pages">
+                <span>
+                  {eventTotal
+                    ? `Showing ${offset + 1}–${Math.min(offset + events.length, eventTotal)} of ${eventTotal}`
+                    : 'No matching events'}
+                </span>
+                <div>
+                  <button
+                    className="button button-quiet"
+                    disabled={offset === 0}
+                    onClick={() => setOffset(Math.max(0, offset - 25))}
+                  >
+                    Previous
+                  </button>
+                  <button
+                    className="button button-quiet"
+                    disabled={offset + 25 >= eventTotal}
+                    onClick={() => setOffset(offset + 25)}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
             </>
           )}
 
@@ -498,7 +629,7 @@ function App() {
                   <p>Each row is a durable job. Open an event to inspect its recorded attempts.</p>
                 </div>
               </div>
-              <DeliveryTable deliveries={deliveries} events={events} onOpen={openDetail} />
+              <DeliveryTable deliveries={deliveries} onOpen={openDetail} />
             </>
           )}
 
@@ -557,10 +688,7 @@ function App() {
                         <button
                           className="text-button"
                           onClick={() => {
-                            void openDetail(
-                              events.find((event) => event.event_id === job.event_id) ??
-                                ({ event_id: job.event_id } as EventRow),
-                            );
+                            void openDetail(job.event_id);
                           }}
                         >
                           Inspect event
@@ -583,6 +711,9 @@ function App() {
                     One fixed synthetic Orders receiver. Destinations cannot be changed from this workspace.
                   </p>
                 </div>
+                <button className="button button-primary" onClick={openSendForm}>
+                  ＋ Send test event
+                </button>
               </div>
               <section className="panel endpoint-card">
                 <div className="endpoint-icon">⇢</div>
@@ -633,8 +764,7 @@ function App() {
                       className="activity-row"
                       key={`${item.action}-${item.event_id}-${item.happened_at}-${index}`}
                       onClick={() => {
-                        const event = events.find((row) => row.event_id === item.event_id);
-                        if (event) void openDetail(event);
+                        void openDetail(item.event_id);
                       }}
                     >
                       <span
@@ -669,7 +799,14 @@ function App() {
           </footer>
         </main>
       </div>
-      {detail && <EventDialog event={detail} onClose={() => setDetail(null)} />}
+      {detail && (
+        <EventDialog
+          event={detail}
+          onClose={closeDetail}
+          onDuplicate={() => void duplicateEvent(detail.event_id)}
+          busy={busy}
+        />
+      )}
     </div>
   );
 }
@@ -741,20 +878,20 @@ function EventTable({
             <tbody>
               {events.map((event) => (
                 <tr key={event.id}>
-                  <td>
+                  <td data-label="Order">
                     <button className="row-link" onClick={() => onOpen(event)}>
                       {event.payload.data.order_id}
                     </button>
                     <small>{event.event_id.slice(0, 8)}…</small>
                   </td>
-                  <td>
+                  <td data-label="Event">
                     <span className="event-type">{event.event_type}</span>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <Badge state={event.status} />
                   </td>
-                  <td>{dateTime(event.received_at)}</td>
-                  <td>
+                  <td data-label="Received">{dateTime(event.received_at)}</td>
+                  <td data-label={showAttempts ? 'Attempts' : 'Delivery'}>
                     {showAttempts
                       ? event.total_attempts
                       : event.status === 'PENDING'
@@ -775,12 +912,10 @@ function EventTable({
 
 function DeliveryTable({
   deliveries,
-  events,
   onOpen,
 }: {
   deliveries: DeliveryRow[];
-  events: EventRow[];
-  onOpen: (event: EventRow) => void;
+  onOpen: (eventId: string) => void;
 }) {
   return (
     <section className="panel table-panel">
@@ -804,25 +939,19 @@ function DeliveryTable({
             <tbody>
               {deliveries.map((delivery) => (
                 <tr key={delivery.job_id}>
-                  <td>
-                    <button
-                      className="row-link"
-                      onClick={() => {
-                        const event = events.find((row) => row.event_id === delivery.event_id);
-                        if (event) void onOpen(event);
-                      }}
-                    >
+                  <td data-label="Order">
+                    <button className="row-link" onClick={() => onOpen(delivery.event_id)}>
                       {delivery.order_id}
                     </button>
                     <small>{delivery.event_id.slice(0, 8)}…</small>
                   </td>
-                  <td>
+                  <td data-label="Delivery ID">
                     <code className="event-type">{delivery.delivery_id.slice(0, 8)}…</code>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <Badge state={delivery.status} />
                   </td>
-                  <td>
+                  <td data-label="Last response">
                     {delivery.latest_http_status
                       ? `HTTP ${delivery.latest_http_status}`
                       : delivery.status === 'PENDING'
@@ -830,7 +959,7 @@ function DeliveryTable({
                         : 'No attempt yet'}
                     {delivery.latest_error_class && <small>{delivery.latest_error_class}</small>}
                   </td>
-                  <td>{delivery.total_attempts}</td>
+                  <td data-label="Attempts">{delivery.total_attempts}</td>
                 </tr>
               ))}
             </tbody>
@@ -853,13 +982,45 @@ function EmptyState({ title, body }: { title: string; body: string }) {
   );
 }
 
-function EventDialog({ event, onClose }: { event: EventDetail; onClose: () => void }) {
+function EventDialog({
+  event,
+  onClose,
+  onDuplicate,
+  busy,
+}: {
+  event: EventDetail;
+  onClose: () => void;
+  onDuplicate: () => void;
+  busy: boolean;
+}) {
   useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]');
+    const focusables = () =>
+      Array.from(
+        dialog?.querySelectorAll<HTMLElement>(
+          'button, a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+    focusables()[0]?.focus();
     const closeOnEscape = (keyboard: KeyboardEvent) => {
       if (keyboard.key === 'Escape') onClose();
+      if (keyboard.key === 'Tab') {
+        const items = focusables();
+        if (keyboard.shiftKey && document.activeElement === items[0]) {
+          keyboard.preventDefault();
+          items.at(-1)?.focus();
+        } else if (!keyboard.shiftKey && document.activeElement === items.at(-1)) {
+          keyboard.preventDefault();
+          items[0]?.focus();
+        }
+      }
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      previous?.focus();
+    };
   }, [onClose]);
   return (
     <div
@@ -880,9 +1041,19 @@ function EventDialog({ event, onClose }: { event: EventDetail; onClose: () => vo
         </div>
         <div className="detail-summary">
           <Badge state={event.status} />
+          <span className={event.signature_verified ? 'signature-ok' : 'signature-unknown'}>
+            {event.signature_verified ? 'Signature accepted' : 'Signature unknown'}
+          </span>
           <span>{event.event_type}</span>
           <time>{dateTime(event.received_at)}</time>
         </div>
+        <button
+          className="button button-quiet"
+          disabled={busy || !event.signature_verified}
+          onClick={onDuplicate}
+        >
+          Send identical payload again
+        </button>
         <div className="detail-block">
           <h3>Event identity</h3>
           <code className="copy-code">{event.event_id}</code>

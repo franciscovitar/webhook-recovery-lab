@@ -11,6 +11,8 @@ import { buildApp } from '../http/app.js';
 import { HttpDeliveryTransport } from '../worker/http-transport.js';
 import { WorkerRunner } from '../worker/runner.js';
 import { WorkerScheduler } from '../worker/scheduler.js';
+import { gatewayMigrations, receiverMigrations, PostgresMigrationReadiness } from '../db/migrations.js';
+import { WorkspaceLifecycleRunner } from '../ops/workspace-lifecycle.js';
 
 const databaseUrl = process.env['DATABASE_URL'];
 const receiverDatabaseUrl = process.env['RECEIVER_DATABASE_URL'];
@@ -44,6 +46,12 @@ const receiverPool = createPool(receiverDatabaseUrl, 1);
 const inbox = new PostgresInboxRepository(gatewayPool);
 const deliveryStore = new PostgresDeliveryStore(gatewayPool);
 const receiverStore = new PostgresReceiverStore(receiverPool);
+const workspaceStore = new PostgresGuestWorkspaceStore(gatewayPool);
+const lifecycle = new WorkspaceLifecycleRunner(workspaceStore, receiverStore);
+const readiness = [
+  new PostgresMigrationReadiness(gatewayPool, gatewayMigrations),
+  new PostgresMigrationReadiness(receiverPool, receiverMigrations),
+];
 const receiver = buildReceiverApp({ store: receiverStore, sharedToken: internalToken });
 const worker = new WorkerRunner({
   store: deliveryStore,
@@ -75,7 +83,7 @@ const scheduler = new WorkerScheduler(worker, deliveryStore);
 const app = buildApp({
   repository: inbox,
   signingKeys: new Map([[signingKeyId, signingSecret]]),
-  guestWorkspaces: new PostgresGuestWorkspaceStore(gatewayPool),
+  guestWorkspaces: workspaceStore,
   workspaceQueries: new PostgresWorkspaceQueries(gatewayPool),
   workspaceSigning: { keyId: signingKeyId, secret: signingSecret },
   deliveryRecovery: deliveryStore,
@@ -83,7 +91,8 @@ const app = buildApp({
   secureCookies: publicDemo,
   allowLegacyIngress: !publicDemo,
   onAccepted: () => scheduler.wake(),
-  dependencies: [receiverStore],
+  dependencies: [receiverStore, ...readiness],
+  onWorkspaceSession: () => lifecycle.runOnce(),
   ...(publicDemo ? { expectedOrigin: new URL(process.env['PUBLIC_BASE_URL']!).origin } : {}),
   webRoot: new URL('../../dist/public', import.meta.url).pathname,
   logger: true,
@@ -104,6 +113,9 @@ process.once('SIGINT', () => void close());
 process.once('SIGTERM', () => void close());
 
 try {
+  await lifecycle
+    .runOnce()
+    .catch((error: unknown) => app.log.warn({ err: error }, 'workspace cleanup deferred'));
   await receiver.listen({ host: '127.0.0.1', port: receiverPort });
   await app.listen({ host: '0.0.0.0', port });
   scheduler.start();

@@ -36,15 +36,23 @@ export class PostgresDeliveryStore implements DeliveryStore {
     const result = await this.pool.query<{ delay_ms: number | null }>(
       `SELECT GREATEST(0, floor(EXTRACT(EPOCH FROM (min(due_at) - clock_timestamp())) * 1000))::int AS delay_ms
          FROM (
-           SELECT next_attempt_at AS due_at FROM delivery_jobs WHERE status = 'PENDING'
+           SELECT j.next_attempt_at AS due_at FROM delivery_jobs j
+             JOIN inbox_events e ON e.id = j.inbox_event_id
+            WHERE j.status = 'PENDING' AND (e.workspace_id IS NULL OR EXISTS (
+              SELECT 1 FROM guest_workspaces w WHERE w.id = e.workspace_id
+                AND w.closed_at IS NULL AND w.expires_at > clock_timestamp()))
            UNION ALL
-           SELECT lease_until AS due_at FROM delivery_jobs WHERE status = 'LEASED'
+           SELECT j.lease_until AS due_at FROM delivery_jobs j
+             JOIN inbox_events e ON e.id = j.inbox_event_id
+            WHERE j.status = 'LEASED' AND (e.workspace_id IS NULL OR EXISTS (
+              SELECT 1 FROM guest_workspaces w WHERE w.id = e.workspace_id
+                AND w.closed_at IS NULL AND w.expires_at > clock_timestamp()))
          ) due`,
     );
     return result.rows[0]?.delay_ms ?? null;
   }
 
-  /** One short transaction claims a due/expired job; HTTP happens after COMMIT. */
+  /** Per-workspace lock serializes claims against expiry cleanup. */
   async claimNext(): Promise<ClaimedJob | null> {
     const client = await this.pool.connect();
     try {
@@ -57,10 +65,33 @@ export class PostgresDeliveryStore implements DeliveryStore {
           WHERE (j.status = 'PENDING' AND j.next_attempt_at <= clock_timestamp())
              OR (j.status = 'LEASED' AND j.lease_until <= clock_timestamp())
           ORDER BY COALESCE(j.lease_until, j.next_attempt_at), j.id
-          LIMIT 1
-          FOR UPDATE OF j SKIP LOCKED`,
+          LIMIT 10`,
       );
-      const row = candidates.rows[0];
+      let row: CandidateRow | undefined;
+      for (const candidate of candidates.rows) {
+        if (candidate.workspace_id) {
+          await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
+            candidate.workspace_id,
+          ]);
+        }
+        const selected = await client.query<CandidateRow>(
+          `SELECT j.id, j.status, j.lease_token, j.total_attempts,
+                  j.attempts_in_generation, j.replay_generation, j.delivery_id, e.workspace_id,
+                  e.event_id, e.payload
+             FROM delivery_jobs j JOIN inbox_events e ON e.id = j.inbox_event_id
+             WHERE j.id = $1
+               AND ((j.status = 'PENDING' AND j.next_attempt_at <= clock_timestamp())
+                 OR (j.status = 'LEASED' AND j.lease_until <= clock_timestamp()))
+               AND ($2::uuid IS NULL OR EXISTS (SELECT 1 FROM guest_workspaces w
+                 WHERE w.id = $2 AND w.closed_at IS NULL AND w.expires_at > clock_timestamp()))
+             FOR UPDATE OF j SKIP LOCKED`,
+          [candidate.id, candidate.workspace_id],
+        );
+        if (selected.rows[0]) {
+          row = selected.rows[0];
+          break;
+        }
+      }
       if (!row) {
         await client.query('COMMIT');
         return null;
@@ -194,22 +225,50 @@ export class PostgresDeliveryStore implements DeliveryStore {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (workspaceId) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [workspaceId]);
+        const active = await client.query(
+          `SELECT 1 FROM guest_workspaces WHERE id = $1
+          AND closed_at IS NULL AND expires_at > clock_timestamp() FOR UPDATE`,
+          [workspaceId],
+        );
+        if (!active.rowCount) {
+          await client.query('ROLLBACK');
+          throw new Error('Guest workspace has expired');
+        }
+      }
       if (workspaceId && requestId) {
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
           `${workspaceId}:${requestId}`,
         ]);
-        const priorAction = await client.query<{ job_id: string; new_generation: number }>(
-          `SELECT job_id, new_generation FROM replay_audit
+        const priorAction = await client.query<{ job_id: string; reason: string; new_generation: number }>(
+          `SELECT job_id, reason, new_generation FROM replay_audit
             WHERE workspace_id = $1 AND request_id = $2`,
           [workspaceId, requestId],
         );
         if (priorAction.rows[0]) {
-          if (priorAction.rows[0].job_id !== jobId) {
+          if (priorAction.rows[0].job_id !== jobId || priorAction.rows[0].reason !== reason.trim()) {
             await client.query('ROLLBACK');
             throw new Error('replay request ID was already used for another job');
           }
           await client.query('COMMIT');
           return priorAction.rows[0].new_generation;
+        }
+      }
+      if (workspaceId) {
+        const budget = await client.query(
+          `INSERT INTO workspace_mutation_budgets (workspace_id, window_started_at, mutation_count)
+          VALUES ($1, clock_timestamp(), 1)
+          ON CONFLICT (workspace_id) DO UPDATE SET
+            mutation_count = CASE WHEN workspace_mutation_budgets.window_started_at <= clock_timestamp() - interval '1 hour' THEN 1 ELSE workspace_mutation_budgets.mutation_count + 1 END,
+            window_started_at = CASE WHEN workspace_mutation_budgets.window_started_at <= clock_timestamp() - interval '1 hour' THEN clock_timestamp() ELSE workspace_mutation_budgets.window_started_at END
+          WHERE workspace_mutation_budgets.window_started_at <= clock_timestamp() - interval '1 hour'
+             OR workspace_mutation_budgets.mutation_count < 20 RETURNING workspace_id`,
+          [workspaceId],
+        );
+        if (!budget.rowCount) {
+          await client.query('ROLLBACK');
+          throw new Error('workspace mutation limit reached');
         }
       }
       const selected = await client.query<{

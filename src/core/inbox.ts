@@ -1,6 +1,6 @@
 import type { SandboxEvent } from './event.js';
 
-export type IngestDecision = 'accepted' | 'duplicate' | 'conflict' | 'capacity';
+export type IngestDecision = 'accepted' | 'duplicate' | 'conflict' | 'capacity' | 'expired';
 
 export interface IncomingWebhook {
   provider: 'sandbox';
@@ -11,6 +11,7 @@ export interface IncomingWebhook {
   event: SandboxEvent;
   rawBody: Buffer;
   payloadSha256: string;
+  signatureVerified?: boolean;
 }
 
 /** Implementations must commit inbox + job before resolving 'accepted'. */

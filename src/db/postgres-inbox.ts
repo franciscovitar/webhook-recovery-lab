@@ -19,6 +19,20 @@ export class PostgresInboxRepository implements InboxRepository {
       transactionOpen = true;
 
       const inboxId = randomUUID();
+      if (incoming.workspaceId) {
+        await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
+          incoming.workspaceId,
+        ]);
+        const active = await connection.query(
+          `SELECT 1 FROM guest_workspaces
+          WHERE id = $1 AND closed_at IS NULL AND expires_at > clock_timestamp() FOR UPDATE`,
+          [incoming.workspaceId],
+        );
+        if (!active.rowCount) {
+          await connection.query('COMMIT');
+          return 'expired';
+        }
+      }
       const parameters = [
         inboxId,
         incoming.provider,
@@ -35,22 +49,22 @@ export class PostgresInboxRepository implements InboxRepository {
             ]);
             return connection.query<{ id: string }>(
               `INSERT INTO inbox_events
-               (id, workspace_id, provider, event_id, event_type, occurred_at, payload_sha256, payload)
-             SELECT $1, $8, $2, $3, $4, $5, $6, $7::jsonb
+              (id, workspace_id, provider, event_id, event_type, occurred_at, payload_sha256, payload, raw_body, signature_verified)
+             SELECT $1, $8, $2, $3, $4, $5, $6, $7::jsonb, $9, $10
                FROM (SELECT count(*) AS count FROM inbox_events WHERE workspace_id = $8) AS existing
               WHERE existing.count < 10
              ON CONFLICT (workspace_id, provider, event_id) WHERE workspace_id IS NOT NULL DO NOTHING
              RETURNING id`,
-              [...parameters, incoming.workspaceId],
+              [...parameters, incoming.workspaceId, incoming.rawBody, incoming.signatureVerified ?? false],
             );
           })()
         : await connection.query<{ id: string }>(
             `INSERT INTO inbox_events
-               (id, provider, event_id, event_type, occurred_at, payload_sha256, payload)
-             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+               (id, provider, event_id, event_type, occurred_at, payload_sha256, payload, raw_body, signature_verified)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
              ON CONFLICT (provider, event_id) WHERE workspace_id IS NULL DO NOTHING
              RETURNING id`,
-            parameters,
+            [...parameters, incoming.rawBody, incoming.signatureVerified ?? false],
           );
 
       let outcome: IngestDecision;

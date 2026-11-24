@@ -108,6 +108,37 @@ describe('guest workspace API', () => {
     expect(ownEvents.statusCode).toBe(200);
     expect(ownEvents.json().events).toHaveLength(1);
     expect(ownEvents.json().events[0].payload.data.order_id).toBe('ord_guest_scope');
+    const detail = await app.inject({
+      method: 'GET',
+      url: `/api/demo/events/${sent.json().event_id}`,
+      headers: { cookie },
+    });
+    expect(detail.json().signature_verified).toBe(true);
+    const duplicated = await app.inject({
+      method: 'POST',
+      url: `/api/demo/events/${sent.json().event_id}/duplicate`,
+      headers: { ...origin, cookie },
+    });
+    expect(duplicated.statusCode).toBe(202);
+    expect(duplicated.json()).toMatchObject({
+      event_id: sent.json().event_id,
+      status: 'duplicate',
+      signature_accepted: true,
+    });
+    const afterDuplicate = await app.inject({ method: 'GET', url: '/api/demo/events', headers: { cookie } });
+    expect(afterDuplicate.json().total).toBe(1);
+    const filteredOut = await app.inject({
+      method: 'GET',
+      url: '/api/demo/events?from=2027-01-01T00:00:00.000Z',
+      headers: { cookie },
+    });
+    expect(filteredOut.json()).toMatchObject({ total: 0, events: [] });
+    const badDateRange = await app.inject({
+      method: 'GET',
+      url: '/api/demo/events?from=2027-01-02T00:00:00.000Z&to=2027-01-01T00:00:00.000Z',
+      headers: { cookie },
+    });
+    expect(badDateRange.statusCode).toBe(400);
 
     const foreignEvents = await app.inject({
       method: 'GET',

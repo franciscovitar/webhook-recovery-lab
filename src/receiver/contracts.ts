@@ -26,4 +26,11 @@ export interface ReceiverStore {
   ping(): Promise<void>;
   preparePermanentFailure?(deliveryId: string, workspaceId: string): Promise<void>;
   restoreFaultPlan?(deliveryId: string, workspaceId: string): Promise<boolean>;
+  purgeWorkspace?(workspaceId: string): Promise<void>;
+  listOrphanCandidates?(
+    olderThan: Date,
+    limit: number,
+  ): Promise<Array<{ delivery_id: string; workspace_id: string }>>;
+  removeOrphanPlan?(deliveryId: string, workspaceId: string): Promise<void>;
+  pruneClosedWorkspaces?(olderThan: Date): Promise<void>;
 }

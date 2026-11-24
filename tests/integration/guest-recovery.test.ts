@@ -157,5 +157,13 @@ describe('isolated receiver recovery', () => {
       payload: { reason: 'Receiver restored for recovery test', request_id: replayRequestId },
     });
     expect(repeatedReplay.json()).toMatchObject({ status: 'delivered', replay_generation: 1 });
-  });
+    const conflictingReplay = await app.inject({
+      method: 'POST',
+      url: `/api/demo/recovery/${jobId}/replay`,
+      headers: { ...origin, cookie, 'content-type': 'application/json' },
+      payload: { reason: 'Different reason with same id', request_id: replayRequestId },
+    });
+    expect(conflictingReplay.statusCode).toBe(409);
+    expect(conflictingReplay.json()).toEqual({ error: 'request_identity_conflict' });
+  }, 15_000);
 });

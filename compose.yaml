@@ -12,10 +12,15 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/init/01_receiver.sql:/docker-entrypoint-initdb.d/01_receiver.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U wrl -d gateway_db']
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U wrl -d gateway_db && psql -U wrl -d receiver_db -c "SELECT 1" >/dev/null',
+        ]
       interval: 2s
       timeout: 2s
       retries: 20
+      start_period: 15s
 
   migrate:
     build: .
@@ -35,9 +40,12 @@ services:
     build: .
     environment:
       DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/gateway_db
+      RECEIVER_DATABASE_URL: postgres://wrl:wrl_local_only@db:5432/receiver_db
+      INTERNAL_DELIVERY_TOKEN: replace-with-a-separate-long-internal-demo-token
       WEBHOOK_SIGNING_KEY_ID: sandbox-v1
       WEBHOOK_SIGNING_SECRET: replace-with-a-long-random-development-secret
       PORT: '3000'
+      RECEIVER_PORT: '3001'
     ports:
       - '127.0.0.1:3000:3000'
     depends_on:

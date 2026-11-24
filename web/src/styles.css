@@ -61,6 +61,21 @@ code {
   white-space: nowrap;
   border: 0;
 }
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 20;
+  transform: translateY(-150%);
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: white;
+  color: var(--navy);
+  box-shadow: 0 2px 12px #14233540;
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
 
 .app-shell {
   min-height: 100vh;
@@ -496,6 +511,35 @@ h1 {
   padding: 10px;
   resize: vertical;
 }
+.scenario-options {
+  min-width: 0;
+  color: #68798a;
+  font-size: 10px;
+}
+.scenario-options summary {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #dfe5eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #536577;
+  cursor: pointer;
+  font-weight: 600;
+  list-style-position: inside;
+}
+.scenario-options[open] summary {
+  border-radius: 6px 6px 0 0;
+}
+.scenario-options .field {
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid #dfe5eb;
+  border-top: 0;
+  border-radius: 0 0 6px 6px;
+  background: #fff;
+}
 .send-button {
   min-width: 116px;
 }
@@ -667,6 +711,46 @@ td small {
   display: flex;
   gap: 10px;
   margin-bottom: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #6c7b89;
+  font-size: 11px;
+}
+.date-filter input {
+  min-height: 37px;
+  padding: 0 8px;
+  border: 1px solid #dfe5eb;
+  border-radius: 6px;
+  background: white;
+  color: #405264;
+}
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 4px;
+  color: #718095;
+  font-size: 11px;
+}
+.pagination > div {
+  display: flex;
+  gap: 8px;
+}
+.signature-ok {
+  color: #167954;
+  font-size: 11px;
+  font-weight: 600;
+}
+.signature-unknown {
+  color: #98702b;
+  font-size: 11px;
+  font-weight: 600;
 }
 .search-box {
   width: min(370px, 100%);
@@ -1191,11 +1275,81 @@ td small {
     display: grid;
     grid-template-columns: 1fr;
   }
+  .date-filter {
+    justify-content: space-between;
+  }
+  .date-filter input {
+    flex: 1;
+  }
+  .pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
   .search-box {
     width: 100%;
   }
   .filter-select select {
     width: 100%;
+  }
+  .table-scroll {
+    overflow: visible;
+  }
+  table,
+  tbody {
+    display: block;
+    width: 100%;
+  }
+  thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+  }
+  tbody {
+    display: grid;
+    gap: 9px;
+    padding: 9px;
+  }
+  tbody tr {
+    display: block;
+    overflow: hidden;
+    border: 1px solid #e9edf1;
+    border-radius: 8px;
+    background: #fff;
+  }
+  td,
+  td:first-child,
+  td:last-child {
+    display: flex;
+    min-height: 38px;
+    height: auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 11px;
+    white-space: normal;
+    text-align: right;
+  }
+  td::before {
+    content: attr(data-label);
+    flex: 0 0 78px;
+    color: #82909d;
+    font-size: 9px;
+    font-weight: 600;
+    text-align: left;
+  }
+  td:first-child {
+    display: block;
+    text-align: left;
+    background: #fafbfc;
+  }
+  td:first-child::before {
+    display: block;
+    margin-bottom: 4px;
+  }
+  td small {
+    text-align: right;
   }
   .recovery-card {
     padding: 15px;

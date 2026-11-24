@@ -17,13 +17,77 @@ export class PostgresReceiverStore implements ReceiverStore {
   }
 
   async preparePermanentFailure(deliveryId: string, workspaceId: string): Promise<void> {
-    await this.pool.query(
-      `INSERT INTO receiver_fault_plans (delivery_id, workspace_id, permanent_status)
-       VALUES ($1, $2, 422)
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [workspaceId]);
+      const closed = await client.query('SELECT 1 FROM receiver_closed_workspaces WHERE workspace_id = $1', [
+        workspaceId,
+      ]);
+      if (closed.rowCount) throw new Error('Guest workspace has expired');
+      const prepared = await client.query(
+        `INSERT INTO receiver_fault_plans (delivery_id, workspace_id, permanent_status, prepared_at)
+       VALUES ($1, $2, 422, clock_timestamp())
        ON CONFLICT (delivery_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id,
-         transient_remaining = 0, permanent_status = 422, delay_after_commit_ms = 0`,
-      [deliveryId, workspaceId],
+         transient_remaining = 0, permanent_status = 422, delay_after_commit_ms = 0,
+         prepared_at = clock_timestamp()
+       WHERE receiver_fault_plans.workspace_id = EXCLUDED.workspace_id
+       RETURNING delivery_id`,
+        [deliveryId, workspaceId],
+      );
+      if (!prepared.rowCount) throw new Error('Delivery identity belongs to another workspace');
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async purgeWorkspace(workspaceId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [workspaceId]);
+      await client.query('DELETE FROM receiver_fault_plans WHERE workspace_id = $1', [workspaceId]);
+      await client.query('DELETE FROM receiver_receipts WHERE workspace_id = $1', [workspaceId]);
+      await client.query('DELETE FROM receiver_attempt_counts WHERE workspace_id = $1', [workspaceId]);
+      await client.query(
+        `INSERT INTO receiver_closed_workspaces (workspace_id) VALUES ($1)
+         ON CONFLICT (workspace_id) DO UPDATE SET closed_at = EXCLUDED.closed_at`,
+        [workspaceId],
+      );
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async pruneClosedWorkspaces(olderThan: Date): Promise<void> {
+    await this.pool.query('DELETE FROM receiver_closed_workspaces WHERE closed_at < $1', [olderThan]);
+  }
+
+  async listOrphanCandidates(
+    olderThan: Date,
+    limit: number,
+  ): Promise<Array<{ delivery_id: string; workspace_id: string }>> {
+    const result = await this.pool.query<{ delivery_id: string; workspace_id: string }>(
+      `SELECT delivery_id, workspace_id FROM receiver_fault_plans
+        WHERE workspace_id IS NOT NULL AND prepared_at < $1 ORDER BY prepared_at LIMIT $2`,
+      [olderThan, limit],
     );
+    return result.rows;
+  }
+
+  async removeOrphanPlan(deliveryId: string, workspaceId: string): Promise<void> {
+    await this.pool.query('DELETE FROM receiver_fault_plans WHERE delivery_id = $1 AND workspace_id = $2', [
+      deliveryId,
+      workspaceId,
+    ]);
   }
 
   async restoreFaultPlan(deliveryId: string, workspaceId: string): Promise<boolean> {
@@ -36,19 +100,36 @@ export class PostgresReceiverStore implements ReceiverStore {
 
   async receive(delivery: ReceiverDelivery): Promise<ReceiverResult> {
     const client = await this.pool.connect();
+    const workspaceId = delivery.workspace_id ?? null;
     try {
       await client.query('BEGIN');
+      if (workspaceId) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [workspaceId]);
+        const closed = await client.query(
+          'SELECT 1 FROM receiver_closed_workspaces WHERE workspace_id = $1',
+          [workspaceId],
+        );
+        if (closed.rowCount) {
+          await client.query('ROLLBACK');
+          return { code: 410, result: 'injected_failure', delayAfterCommitMs: 0 };
+        }
+      }
       // A single UPSERT row lock serializes concurrent deliveries of the same ID.
-      await client.query(
-        `INSERT INTO receiver_attempt_counts (delivery_id, attempts)
-          VALUES ($1, 1)
+      const attempt = await client.query(
+        `INSERT INTO receiver_attempt_counts (delivery_id, workspace_id, attempts)
+          VALUES ($1, $2, 1)
           ON CONFLICT (delivery_id) DO UPDATE
           SET attempts = receiver_attempt_counts.attempts + 1,
-              last_attempt_at = clock_timestamp()`,
-        [delivery.delivery_id],
+              last_attempt_at = clock_timestamp()
+          WHERE receiver_attempt_counts.workspace_id IS NOT DISTINCT FROM EXCLUDED.workspace_id
+          RETURNING delivery_id`,
+        [delivery.delivery_id, delivery.workspace_id ?? null],
       );
+      if (!attempt.rowCount) {
+        await client.query('ROLLBACK');
+        return { code: 409, result: 'injected_failure', delayAfterCommitMs: 0 };
+      }
 
-      const workspaceId = delivery.workspace_id ?? null;
       const previous = await client.query<{
         event_id: string;
         order_id: string;

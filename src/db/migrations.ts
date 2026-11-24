@@ -8,12 +8,28 @@ export const gatewayMigrations = [
   '0002_guest_workspaces',
   '0003_scope_events_to_workspaces',
   '0004_workspace_replay_idempotency',
+  '0005_workspace_lifecycle',
 ] as const;
 export const receiverMigrations = [
   '0001_receiver',
   '0002_receiver_workspace_identity',
   '0003_receiver_workspace_fault_plans',
+  '0004_receiver_lifecycle',
 ] as const;
+
+/** Readiness is true only when every migration expected by this binary is recorded. */
+export class PostgresMigrationReadiness {
+  constructor(
+    private readonly pool: Pool,
+    private readonly expected: readonly string[],
+  ) {}
+  async ping(): Promise<void> {
+    const result = await this.pool.query<{ version: string }>('SELECT version FROM schema_migrations');
+    const applied = new Set(result.rows.map((row) => row.version));
+    const missing = this.expected.filter((version) => !applied.has(version));
+    if (missing.length) throw new Error(`Database migrations missing: ${missing.join(', ')}`);
+  }
+}
 
 // Explicit manifests keep the two databases independent.
 export async function applyMigrations(
