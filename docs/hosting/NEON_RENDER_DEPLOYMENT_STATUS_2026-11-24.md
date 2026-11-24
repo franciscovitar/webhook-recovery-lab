@@ -1,85 +1,98 @@
 # Neon Free + Render Free deployment status — 2026-11-24
 
 Repository: `franciscovitar/webhook-recovery-lab` (private).
-Target branch: `feat/webhook-operations-v3`; validated application commit: `c45a0148298b7519518043623027a99597eeed4f`.
-Scope: V3 QA only. No change to Aiven, Library Network, Vercel Production, repository visibility, or `main`.
+Branch: `feat/webhook-operations-v3`.
+Validated application commit: `c45a0148298b7519518043623027a99597eeed4f`.
+Deployed branch head: `da3e5096d31b01c6ed7232b2f9c6e4e737f42901` (documentation-only descendant; no V3 application code changed).
+Scope: isolated V3 QA. Aiven, Library Network, Vercel Production, repository visibility, and `main` remain untouched.
 
-## Cost gate — passed for the currently observed account state
+## Cost gate and limits
 
 ### Render
 
-Authenticated Billing Information page, workspace **My Workspace** (`tea-dc2bqmuc6qcc73dgd1hg`), observed 2026-11-24:
+Authenticated billing for **My Workspace** (`tea-dc2bqmuc6qcc73dgd1hg`) was checked before provisioning on 2026-11-24:
 
-- Plan: Hobby; payment method: **no card on file**.
-- Free instance hours: 10.08 / 750.
-- Services: 2 / 25.
-- Outbound bandwidth: 107 MB / 5 GB (104 MB HTTP responses, 3 MB service-initiated).
-- Build pipeline: 4 / 500 minutes.
+- Hobby workspace, no payment method/card.
+- 10.08 / 750 free instance-hours; 107 MB / 5 GB egress; 4 / 500 build-pipeline minutes.
 - Unbilled and projected November totals: **US$0.00**.
+- The new service is explicitly reported as `plan=free`, one instance, Ohio, no disk, auto-deploy off.
+- A second manual QA deploy reused the same commit and completed successfully. No new charge-capable service or paid feature was created.
 
-Render's Free documentation says Free compute is US$0; it sleeps after 15 minutes without inbound traffic and wakes on the next request (about one minute). At the current no-card state, exhausting included bandwidth suspends Free services and exhausting pipeline minutes pauses new builds; Free-hour exhaustion suspends Free services. This bounds the current setup to no additional charge while accepting service/build suspension at quota. Review the account again if billing or workspace settings change.
-
-Official references:
-- https://render.com/docs/free
-- https://render.com/docs/faq
+Render's Free documentation: https://render.com/docs/free and https://render.com/docs/faq. The Free service sleeps after 15 minutes without inbound requests and wakes on the next request; free quota exhaustion suspends services or pauses builds. No post-deployment billing-counter refresh was available through the Render integration, so the exact counters above are the pre-provisioning snapshot; the live service plan and no-card workspace state were separately verified.
 
 ### Neon
 
-The Neon account lists:
-- Personal console-managed organization: `org-bold-dew-82033174`, plan **Free**.
-- Separate Vercel-managed organization: `org-tiny-silence-80406509`, plan **Launch**. It was not used for any project operation.
+Only the personal organization `org-bold-dew-82033174` was used; its plan is **Free**. The separate Vercel-managed Launch organization `org-tiny-silence-80406509` was not used. Project usage was inspected after QA:
 
-Neon's current Free-plan FAQ says US$0/month, no overage billing, and suspends compute when monthly CU-hour or network transfer limits are hit. Current documented limits: 100 CU-hours and 1 GB Postgres storage per project, 5 GB public network transfer per project, 10 branches, and scale-to-zero after 5 minutes idle. There are 2 existing projects in the personal organization before this task. Official references:
-- https://github.com/neondatabase/website/blob/main/content/faqs/free-plan-limits-and-quotas.md
-- https://neon.com/blog/neon-free-plan-1-gb-per-project
+- 0.25 CU min/max; Neon Free autosuspend after 5 idle minutes (platform default).
+- 168 CU-seconds reported (about 0.047 CU-hours), 6,543 bytes network transfer at the recorded usage snapshot; no paid usage.
+- Free caps documented by Neon: 100 CU-hours, 1 GiB logical storage and 5 GiB public transfer per project, with compute suspension at included limits.
+- Free plan: no overage billing. Official references: https://github.com/neondatabase/website/blob/main/content/faqs/free-plan-limits-and-quotas.md and https://neon.com/blog/neon-free-plan-1-gb-per-project.
 
-**Cost decision:** Render and Neon are on their Free plans, and the Render workspace has no payment method. At these observed settings, documented quota exhaustion suspends service/compute or pauses new builds instead of creating a payable overage. No plan, card, or paid resource was added. Budget spent: **US$0.00**.
+**Budget result: US$0.00 additional.** No card, upgrade, paid resource, or paid organization was used. Free quota exhaustion can suspend the service/database and is accepted as the limit behavior.
 
-## Neon project provisioned
+## Neon project and database isolation
 
-Created only in the personal Free organization:
+Created only in the personal Neon Free organization:
 
-- Project: `webhook-recovery-lab-v3-qa`
-- Project ID: `misty-dew-97178325`
-- Region: `aws-us-east-2` (Ohio)
-- PostgreSQL: 17
-- Read-write compute min/max: 0.25 CU.
-- Free autosuspend: platform default (5 idle minutes). An explicit timeout override was rejected before resource creation; the project was then created omitting that override. The project reports timeout value 0, the Free-plan default sentinel.
-- Neon Free project cap: 1 GiB branch logical size, 100 CU-hours and 5 GiB public network transfer per month. Storage and compute are shared across the two logical databases within this project.
+- Project `webhook-recovery-lab-v3-qa`, ID `misty-dew-97178325`, Ohio (`aws-us-east-2`), PostgreSQL 17.
+- Branch `br-proud-glade-bew6qhxa`.
+- Two logical databases: `wrl_gateway` and `wrl_receiver`.
+- Runtime roles: `wrl_gateway_app` and `wrl_receiver_app`.
 
-Two logical databases and app roles:
+Migration manifests applied from this branch:
+- Gateway: `0001_initial` through `0005_workspace_lifecycle` (5).
+- Receiver: `0001_receiver` through `0004_receiver_lifecycle` (4).
 
-| Database | Migration manifest | Runtime role | Cross-database CONNECT |
-| --- | --- | --- | --- |
-| `wrl_gateway` | `0001_initial` through `0005_workspace_lifecycle` (5) | `wrl_gateway_app` | denied to `wrl_receiver` |
-| `wrl_receiver` | `0001_receiver` through `0004_receiver_lifecycle` (4) | `wrl_receiver_app` | denied to `wrl_gateway` |
+Each role is limited to its matching database and `public` schema. `CONNECT` was revoked from PUBLIC and granted to the matching runtime role; read-only permission checks as each app role confirmed cross-database CONNECT denied. No connection strings or credential values are stored in this report or GitHub.
 
-Both runtime roles are Neon `read_write`, scoped to their own database and `public` schema. `CONNECT` was revoked from `PUBLIC` in both databases and granted to the matching runtime role. As each role, SQL verified the complete expected migration list and `has_database_privilege(..., other_database, 'CONNECT') = false`. Credential values and connection strings are not recorded here.
+The first receiver migration transaction rolled back due to a semicolon inside a SQL comment confusing statement splitting. A read-only check confirmed no migration ledger had been written; after stripping line comments before splitting, migrations 0001–0004 applied successfully. The gateway manifest applied transactionally. No local development or closed local QA was repeated.
 
-Migrations were applied from the exact `migrations/*.sql` files in the V3 branch. The first receiver transaction rolled back because a comment contained a semicolon; a verification query confirmed `schema_migrations` was absent after rollback. The statements were then split after removing line comments and the receiver transaction applied successfully. The gateway manifest applied in one transaction. No local tests or development were repeated.
+## Render service and deploy
 
-## Render service and deployment — pending
+One service exists for this project:
 
-No Webhook Recovery Render service has been created yet.
+- Name: `webhook-recovery-lab-v3-qa-franv-20261124`
+- ID: `srv-dc2such7lnhs73fd3fp0`
+- URL: https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com
+- Free web service, Ohio, one instance, Dockerfile at repository root, branch `feat/webhook-operations-v3`, auto-deploy disabled, no disk.
+- First deploy `dep-dc2sud97lnhs73fd3gng`; controlled redeploy `dep-dc2ti5m8bjmc738n05c0`; both succeeded.
+- V3 code from validated commit `c45a0148298b7519518043623027a99597eeed4f` was unchanged by the documentation-only deployed descendant.
+- Public entry works without sign-in. React/Vite, Fastify, same-process worker, and loopback receiver run in this one service.
 
-The API create-service call rejected the private repository URL before creating anything. The authenticated Render dashboard shows a GitHub provider is not yet connected. GitHub's Render App setup page asks to install Render on the personal `franciscovitar` account and requests:
+The Render GitHub App is installed using **Only select repositories** with exactly one selected repository: `franciscovitar/webhook-recovery-lab`. The owner approved the exact app permission set. The initial install page's All repositories default was not submitted.
 
-- Read access to repository code and metadata (plus Dependabot alerts).
-- Read/write access to actions, checks, commit statuses, deployments, environments, issues, pull requests, repository hooks, and workflows.
-- Read access to account email.
+## Online QA evidence
 
-GitHub provides an **Only select repositories** scope, which can be limited to `franciscovitar/webhook-recovery-lab`. No app installation or repository access grant has been submitted. The owner was asked for explicit approval of this exact permission set. This approval is the next action; do not proceed with the GitHub App installation until the owner answers.
+All test content was synthetic and confined to browser workspaces. No external webhook destination was configured.
 
-The sole Render workspace has been confirmed as **My Workspace**. Once the GitHub access is approved, the intended service is one Docker web service on Free, Ohio, branch `feat/webhook-operations-v3`, auto-deploy disabled, with the existing V3 API/worker/loopback receiver in the container and the two independent Neon URLs. Planned service name: `webhook-recovery-lab-v3-qa-franv-20261124`. Random app secrets are held only in Render configuration and are not stored in GitHub. No pings or external worker services are planned.
+| Check | Result |
+| --- | --- |
+| Anonymous access | Pass. First visit opened a temporary browser-private workspace without registration, password, or login. |
+| Signed ingress and worker delivery | Pass. Real HMAC-signed synthetic order entered the same-process HTTP receiver and worker; HTTP 200 delivery persisted. |
+| Deduplication | Pass. Reposting the exact signed raw body returned duplicate and did not create another event/attempt. |
+| Failure and recovery | Pass. Controlled receiver rejection produced HTTP 422 and DEAD; restore + replay produced generation 1, attempt 2 HTTP 200, SUCCEEDED, one durable receipt. |
+| PostgreSQL persistence | Pass. Gateway events/jobs/attempts and receiver receipt were queried using the matching restricted app roles. |
+| Visitor isolation | Pass. Separate browser contexts had different workspace IDs; Visitor B saw only its own records. Neon queries confirmed A's five and B's two test events were under distinct workspace IDs. |
+| Render + Neon cold start | Pass. After >15 min Render idle and >5 min Neon idle, the first browser request showed Render's “Service waking up” screen. The service then started without manual dashboard action, served `/` and its API with 200, and restored Visitor B's persisted event. |
+| Pending-job recovery after interruption | Pass. A controlled QA job was left PENDING in Neon with a future due time, then the free service was redeployed. After the due time, the new worker claimed it, sent attempt 2, received HTTP 200, and acknowledged it. The database ended SUCCEEDED with two attempt rows (422 then 200), and Neon receiver had one durable receipt. |
+| Desktop/mobile layout | Desktop operations flow loaded in Chrome. A Chrome device-mode viewport was set to 390 × 844 and the app rendered its mobile navigation and overview. No design/code change was required. |
+| Cold-start first-connection behavior | Non-blocking warning observed: one workspace-cleanup DB connection timed out during Neon wake and cleanup was deferred. The API then listened, root and API calls returned 200, the existing event loaded, and the worker subsequently recovered the pending job. No manual wake or ping was needed. |
+
+Render logs confirm the cold-start sequence: process listening at 18:31:16Z, root HTTP 200 at 18:31:21Z, and API calls 200 at 18:31:22Z. The pending job was acknowledged by the worker at 18:38:36Z after the redeploy at 18:36:06Z. The Neon receipt was stored at 18:38:36Z.
+
+The cold-start cleanup warning was transient and did not block readiness or visitor access. It did not justify a code change. The PG client emits a non-blocking warning that current `sslmode=require` alias semantics will change in a future major dependency release; current runtime uses verify-full behavior. No credentials appeared in logs.
 
 ## Explicitly untouched
 
 - Aiven and its allowlist.
-- Library Network and both existing Render services.
+- Library Network, its Aiven data, and both existing Render services.
 - Neon Launch/Vercel organization.
 - Vercel Production.
+- Showcase.
 - Repository visibility and `main`.
 
-## Next action
+## Outcome and next action
 
-After approval of the scoped Render GitHub App permissions, install with **Only select repositories** and select only this repository. Then create/deploy the single Free service, verify its URL and runtime health, and run the requested online QA. Record deployment identifiers, online behavior, Neon usage, Render usage, and any real integration fixes in this branch.
+The controlled QA deployment is live at the URL above, with separate browser-private workspaces and isolated logical databases. No pings, cron jobs, external worker services, or other extra infrastructure were added. Keep the repository private and this work on the feature branch. Production promotion, repository visibility changes, and merge to `main` remain subject to owner approval.
+
