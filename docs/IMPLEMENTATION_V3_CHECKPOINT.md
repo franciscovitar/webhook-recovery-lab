@@ -43,9 +43,9 @@ Runtime observed: Node `v24.22.3`, npm `11.19.1`, Docker `29.9.2`, PostgreSQL `1
 
 ## Remaining work and limits
 
-- Hosting preflight (provider allowance, billing/overage controls, and exclusive database roles/headroom) remains unverified. Do not provision or deploy under this checkpoint.
+- Hosting preflight completed read-only and persisted in [the infrastructure preflight record](hosting/INFRASTRUCTURE_PREFLIGHT_2026-11-24.md). Render currently shows USD 0.00 month-to-date, no card, 10.08/750 Free instance hours, 107 MB/5 GB bandwidth and 4/500 build minutes. Aiven is Free with no card, but database grants/connections cannot be checked because the existing Library Network IP allowlist blocks the SQL editor; observed service metrics also show about 75% memory use. This is a no-go: no service, database, role, migration, deployment, or Library Network setting was changed.
 - `showcase/` remains its original browser-only model. The repository remains private; this checkpoint does not claim the V3 UI is published.
 
 ## Next action
 
-The V3 functional and local desktop/mobile QA is complete. Hosting preflight remains outside this block; do not merge, change visibility, provision, or deploy under this checkpoint.
+The V3 functional and local desktop/mobile QA is complete. Hosting is blocked pending an owner decision: authorize a temporary Aiven allowlist entry for read-only isolation/capacity inspection, authorize a separately gated project in the personal Neon Free organization, or keep the local demo/showcase. The Neon Vercel-managed Launch organization was not used. Do not change repository visibility, merge to main, change Vercel Production, or provision until the applicable path is explicitly authorized and its no-cost/isolation gates pass.
