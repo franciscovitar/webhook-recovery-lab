@@ -22,7 +22,7 @@ Render's Free documentation: https://render.com/docs/free and https://render.com
 
 ### Neon
 
-Only the personal organization `org-bold-dew-82033174` was used; its plan is **Free**. The separate Vercel-managed Launch organization `org-tiny-silence-80406509` was not used. Project usage was inspected after QA:
+Only the personal organization `org-bold-dew-82033174` was used; its plan is **Free**. The separate Vercel-managed Launch organization `org-tiny-silence-80406509` was not used. The project usage snapshot at 18:36:45Z during the final QA run reported:
 
 - 0.25 CU min/max; Neon Free autosuspend after 5 idle minutes (platform default).
 - 168 CU-seconds reported (about 0.047 CU-hours), 6,543 bytes network transfer at the recorded usage snapshot; no paid usage.
