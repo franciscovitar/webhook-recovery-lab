@@ -56,3 +56,7 @@ The Free-only infrastructure preflight, deployment and online QA are complete. F
 ## Next action
 
 The QA URL is available at https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com. Review the linked hosting report. Do not change repository visibility, merge into `main`, promote to Production, or change other infrastructure without owner approval.
+
+## Presentation refinement — source checkpoint
+
+Owner requested a Spanish-first, more understandable UI after inspecting the deployed version. See [V3 presentation refinement](qa/V3_PRESENTATION_ES_20261124.md). Backend and hosting remain unchanged. New visual/build/browser QA is pending; existing deployed QA evidence remains attributed to its prior commit.

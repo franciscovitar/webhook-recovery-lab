@@ -69,19 +69,76 @@ type EventDetail = EventRow & {
 
 function userFacingError(message: string): string {
   const known: Record<string, string> = {
-    origin_rejected: 'We could not verify this request. Reload the page and try again.',
-    workspace_expired: 'This temporary workspace has expired. Start a fresh workspace to continue.',
-    workspace_event_limit: 'This workspace has reached its event limit. Start a fresh workspace to continue.',
-    workspace_mutation_limit: 'This workspace has reached its action limit for this hour. Try again later.',
-    workspace_capacity: 'Temporary workspaces are busy right now. Try again shortly.',
-    receiver_unavailable: 'The fixed test receiver is temporarily unavailable. Try again shortly.',
-    event_not_repeatable: 'This event has no verified payload to resend.',
-    replay_limit_reached: 'This delivery has reached its replay limit.',
-    replay_reason_required: 'Add a reason before replaying this delivery.',
-    request_identity_conflict: 'This request ID was already used with different details.',
-    'Failed to fetch': 'The service could not be reached. Try again shortly.',
+    origin_rejected: 'No pudimos verificar la solicitud. Recargá la página e intentá nuevamente.',
+    workspace_expired: 'Tu espacio temporal venció. Abrí uno nuevo para continuar.',
+    workspace_event_limit: 'Alcanzaste el límite de eventos de este espacio.',
+    workspace_mutation_limit: 'Alcanzaste el límite de acciones por hora. Intentá más tarde.',
+    workspace_capacity: 'Hay muchos espacios de prueba activos. Intentá en unos minutos.',
+    receiver_unavailable: 'El receptor de prueba no está disponible. Intentá nuevamente.',
+    event_not_repeatable: 'Este evento no tiene datos verificados para reenviar.',
+    replay_limit_reached: 'Esta entrega alcanzó el límite de recuperaciones.',
+    replay_reason_required: 'Ingresá un motivo antes de recuperar la entrega.',
+    request_identity_conflict: 'La solicitud ya se utilizó con otros datos.',
+    'Failed to fetch': 'No pudimos conectarnos con el servicio. Intentá nuevamente.',
   };
-  return known[message] ?? 'We could not complete that request. Try again shortly.';
+  return known[message] ?? 'No pudimos completar la operación. Intentá nuevamente.';
+}
+
+const tabLabels: Record<Tab, string> = {
+  Overview: 'Resumen',
+  Events: 'Eventos',
+  Deliveries: 'Entregas',
+  Recovery: 'Recuperación',
+  Endpoints: 'Receptor',
+  Activity: 'Actividad',
+};
+
+function orderLabel(reference: string): string {
+  return /^ord_[a-f0-9-]+$/i.test(reference)
+    ? `Pedido de prueba · ${reference.slice(-4).toUpperCase()}`
+    : `Pedido ${reference}`;
+}
+
+function eventLabel(type: string): string {
+  return type === 'order.created' ? 'Pedido creado' : 'Otro evento';
+}
+
+function attemptCount(count: number): string {
+  return `${count} ${count === 1 ? 'intento' : 'intentos'}`;
+}
+
+function attemptLabel(result: string): string {
+  const labels: Record<string, string> = {
+    STARTED: 'En proceso',
+    SUCCEEDED: 'Entrega correcta',
+    RETRY: 'Reintento programado',
+    DEAD: 'Entrega fallida',
+    ABANDONED: 'Intento interrumpido',
+    STALE_ACK: 'Respuesta fuera de plazo',
+  };
+  return labels[result] ?? 'Resultado registrado';
+}
+
+function errorLabel(error: string | null): string {
+  const labels: Record<string, string> = {
+    permanent_http: 'El receptor rechazó el envío',
+    transient_http: 'Respuesta temporal del receptor',
+    timeout: 'Tiempo de espera agotado',
+    network: 'Error de comunicación',
+  };
+  return error ? (labels[error] ?? 'Error de entrega') : 'Sin causa registrada';
+}
+
+function httpLabel(status: number): string {
+  if (status >= 200 && status < 300) return `Correcta · HTTP ${status}`;
+  if (status >= 400) return `Error · HTTP ${status}`;
+  return `HTTP ${status}`;
+}
+
+function activityLabel(action: string, detail: string): string {
+  if (action === 'event_received') return 'Evento recibido';
+  if (action === 'replay_requested') return 'Recuperación solicitada';
+  return attemptLabel(detail.split(' · ')[0] ?? '');
 }
 
 const navigation: Array<{ title: Tab; icon: string }> = [
@@ -105,11 +162,11 @@ function dateTime(value: string | null | undefined): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
     ? '—'
-    : date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    : date.toLocaleString('es-AR', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 function stateLabel(state: JobState): string {
-  return { PENDING: 'Pending retry', LEASED: 'Processing', SUCCEEDED: 'Delivered', DEAD: 'Failed' }[state];
+  return { PENDING: 'En espera', LEASED: 'En proceso', SUCCEEDED: 'Entregado', DEAD: 'Fallido' }[state];
 }
 
 function Badge({ state }: { state: JobState }) {
@@ -237,8 +294,8 @@ function App() {
   const deliveredPercent = useMemo(
     () =>
       counts.received === 0
-        ? 'No events yet'
-        : `${Math.round((counts.delivered / counts.received) * 100)}% of received events`,
+        ? 'Todavía sin eventos'
+        : `${Math.round((counts.delivered / counts.received) * 100)}% de los eventos recibidos`,
     [counts],
   );
 
@@ -247,7 +304,7 @@ function App() {
     setError('');
     setNotice('');
     try {
-      const result = await request<{ event_id: string; status: string }>('/api/demo/test-events', {
+      await request<{ event_id: string; status: string }>('/api/demo/test-events', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -256,7 +313,7 @@ function App() {
           scenario,
         }),
       });
-      setNotice(`Event ${result.event_id} was accepted by the signed ingress.`);
+      setNotice('Evento recibido y verificado. Consultá el estado de la entrega.');
       setOrderId('');
       await refresh();
       setTab(scenario === 'permanent_failure' ? 'Recovery' : 'Events');
@@ -287,7 +344,7 @@ function App() {
       const result = await request<{ status: string }>(`/api/demo/events/${eventId}/duplicate`, {
         method: 'POST',
       });
-      setNotice(`Identical signed payload reached ingress: ${result.status}.`);
+      setNotice(result.status === 'duplicate' ? 'Duplicado detectado: no se creó otra entrega.' : 'Reenvío procesado. Consultá el historial del evento.');
       await refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not resend event');
@@ -302,7 +359,7 @@ function App() {
   function openSendForm() {
     setTab('Overview');
     window.setTimeout(() => {
-      document.getElementById('send-event')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('send-event')?.scrollIntoView({ block: 'start' });
       document.getElementById('order-reference')?.focus();
     }, 0);
   }
@@ -318,12 +375,12 @@ function App() {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          reason: replayReason[job.id] ?? 'Controlled receiver restored after test failure',
+          reason: replayReason[job.id] ?? 'Receptor de prueba restaurado después del fallo',
           request_id: crypto.randomUUID(),
         }),
       });
       setNotice(
-        `Replay generation ${result.replay_generation} was queued and will show its persisted outcome.`,
+        `Recuperación ${result.replay_generation} en cola. El resultado aparecerá cuando termine la entrega.`,
       );
       await refresh();
     } catch (cause) {
@@ -337,19 +394,20 @@ function App() {
   if (session === 'starting')
     return (
       <main className="center-state">
-        <div className="loader" />
-        <p>Opening your private sandbox…</p>
+        <div className="loader" aria-hidden="true" />
+        <h1>Preparando tu espacio de prueba…</h1>
+        <p>El servicio gratuito puede tardar alrededor de un minuto en iniciar. No necesitás registrarte.</p>
       </main>
     );
   if (session === 'expired' || session === 'error')
     return (
       <main className="center-state">
         <div className="state-mark">◈</div>
-        <h1>{session === 'expired' ? 'This sandbox has expired' : 'The sandbox could not start'}</h1>
-        <p>Your event history is temporary. Start a fresh isolated workspace to continue.</p>
+        <h1>{session === 'expired' ? 'Tu espacio de prueba venció' : 'No pudimos abrir tu espacio'}</h1>
+        <p>El historial es temporal. Podés iniciar un espacio independiente para continuar.</p>
         {error && <p className="error-text">{userFacingError(error)}</p>}
         <button className="button button-primary" onClick={() => void startSession(true)}>
-          Start a fresh workspace
+          Abrir un espacio nuevo
         </button>
       </main>
     );
@@ -357,23 +415,23 @@ function App() {
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">
-        Skip to main content
+        Ir al contenido principal
       </a>
       <aside className="sidebar">
         <a
           className="brand"
           href="#overview"
           onClick={() => setTab('Overview')}
-          aria-label="Webhook Recovery Lab home"
+          aria-label="Inicio de Webhook Recovery Lab"
         >
           <span className="brand-mark">↗</span>
           <span>
             Webhook<span className="brand-light"> Recovery</span>
-            <small>LAB / SANDBOX</small>
+            <small>GESTIÓN DE ENTREGAS</small>
           </span>
         </a>
-        <div className="nav-label">WORKSPACE</div>
-        <nav aria-label="Main navigation">
+        <div className="nav-label">OPERACIONES</div>
+        <nav aria-label="Navegación principal">
           {navigation.map((item) => (
             <button
               key={item.title}
@@ -384,7 +442,7 @@ function App() {
               <span className="nav-icon" aria-hidden="true">
                 {item.icon}
               </span>
-              {item.title}
+              {tabLabels[item.title]}
               {item.title === 'Recovery' && recovery.length > 0 && (
                 <span className="nav-count">{recovery.length}</span>
               )}
@@ -395,8 +453,8 @@ function App() {
         <div className="sandbox-card">
           <span className="live-dot" />
           <div>
-            <strong>Temporary sandbox</strong>
-            <small>Private to this browser</small>
+            <strong>Espacio temporal</strong>
+            <small>Privado para este navegador</small>
           </div>
         </div>
         <a
@@ -405,20 +463,20 @@ function App() {
           target="_blank"
           rel="noreferrer"
         >
-          View engineering case <span aria-hidden="true">↗</span>
+          Ver caso técnico <span aria-hidden="true">↗</span>
         </a>
       </aside>
 
       <div className="main-column">
         <header className="topbar">
           <div className="breadcrumbs">
-            <span>Workspace</span>
+            <span>Mi espacio</span>
             <span className="crumb-sep">/</span>
-            <strong>{tab}</strong>
+            <strong>{tabLabels[tab]}</strong>
           </div>
           <div className="top-actions">
             <span className="environment">
-              <span className="live-dot" /> Demo environment
+              <span className="live-dot" /> Modo demostración
             </span>
             <button
               className="button button-quiet"
@@ -426,118 +484,153 @@ function App() {
                 setRefreshGeneration((value) => value + 1);
                 void refresh();
               }}
-              aria-label="Refresh data"
+              aria-label="Actualizar datos"
             >
-              ↻ <span>Refresh</span>
+              ↻ <span>Actualizar</span>
             </button>
           </div>
         </header>
 
         <main className="content" id="main-content">
-          {error && (
+          {error && !detail && (
             <div className="notice notice-error" role="alert">
               <span>{userFacingError(error)}</span>
-              <button onClick={() => setError('')} aria-label="Dismiss error">
+              <button onClick={() => setError('')} aria-label="Cerrar error">
                 ×
               </button>
             </div>
           )}
-          {notice && (
+          {notice && !detail && (
             <div className="notice notice-success" role="status">
               <span>{notice}</span>
-              <button onClick={() => setNotice('')} aria-label="Dismiss message">
+              <button onClick={() => setNotice('')} aria-label="Cerrar aviso">
                 ×
               </button>
             </div>
           )}
           {pollingPaused && (
             <p className="polling-note" role="status">
-              Automatic refresh paused after five minutes. Use Refresh to check again.
+              La actualización automática se pausó después de cinco minutos. Usá Actualizar para consultar el estado.
             </p>
           )}
           {tab === 'Overview' && (
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">OPERATIONS</div>
-                  <h1>Webhook overview</h1>
-                  <p>Signed events, delivery health, and recovery in one place.</p>
+                  <div className="eyebrow">CENTRO DE OPERACIONES</div>
+                  <h1>Resumen de entregas</h1>
+                  <p>Supervisá los eventos de tus pedidos, detectá fallos y recuperá entregas desde un mismo lugar.</p>
                 </div>
                 <button className="button button-primary" onClick={openSendForm}>
-                  <span>＋</span> Send test event
+                  <span>＋</span> Crear evento de prueba
                 </button>
               </div>
-              <section className="stat-grid" aria-label="Workspace event counts">
-                <Stat label="Received" value={counts.received} foot="Persisted events" icon="↓" />
+              <section className="intro-panel" aria-label="Cómo funciona">
+                <div className="intro-copy">
+                  <div className="eyebrow">TU ESPACIO DE PRUEBA</div>
+                  <h2>De un pedido a una entrega confiable</h2>
+                  <p>
+                    Un webhook es un aviso automático entre sistemas. Probá cómo se recibe, se
+                    entrega y se recupera si algo falla, sin usar pedidos reales.
+                  </p>
+                </div>
+                <ol className="workflow">
+                  <li>
+                    <span aria-hidden="true">1</span>
+                    <div>
+                      <strong>Recibir</strong>
+                      <small>El pedido genera un evento firmado.</small>
+                    </div>
+                  </li>
+                  <li>
+                    <span aria-hidden="true">2</span>
+                    <div>
+                      <strong>Entregar</strong>
+                      <small>El aviso llega al receptor.</small>
+                    </div>
+                  </li>
+                  <li>
+                    <span aria-hidden="true">3</span>
+                    <div>
+                      <strong>Recuperar</strong>
+                      <small>Si falla, podés volver a enviarlo.</small>
+                    </div>
+                  </li>
+                </ol>
+              </section>
+              <section className="stat-grid" aria-label="Cantidad de eventos del espacio">
+                <Stat label="Recibidos" value={counts.received} foot="Guardados en el sistema" icon="↓" />
                 <Stat
-                  label="Delivered"
+                  label="Entregados"
                   value={counts.delivered}
                   foot={deliveredPercent}
                   icon="✓"
                   tone="green"
                 />
                 <Stat
-                  label="Pending retry"
+                  label="En curso"
                   value={counts.pending}
-                  foot="Waiting or processing"
+                  foot="En espera o procesamiento"
                   icon="◷"
                   tone="amber"
                 />
-                <Stat label="Failed" value={counts.failed} foot="Needs recovery" icon="!" tone="red" />
+                <Stat label="Fallidos" value={counts.failed} foot="Requieren recuperación" icon="!" tone="red" />
               </section>
               <section className="panel send-panel" id="send-event">
                 <div className="panel-heading">
                   <div>
-                    <h2>Send a synthetic order</h2>
+                    <h2>Crear un pedido de prueba</h2>
                     <p>
-                      Creates one signed <code>order.created</code> event and sends it through the real
-                      worker.
+                      Generá un aviso de pedido nuevo. El sistema lo verifica, guarda y entrega al receptor de prueba.
                     </p>
                   </div>
-                  <span className="pill">CONTROLLED TEST</span>
+                  <span className="pill">PRUEBA CONTROLADA</span>
                 </div>
                 <div className="form-row">
                   <label className="field">
-                    Order reference <span className="optional">optional</span>
+                    Referencia del pedido <span className="optional">opcional</span>
                     <input
                       id="order-reference"
                       value={orderId}
                       onChange={(event) => setOrderId(event.target.value)}
-                      placeholder="Generated automatically"
+                      placeholder="Ej.: PED-1042"
                       maxLength={64}
                     />
                   </label>
-                  <details className="scenario-options">
-                    <summary>Recovery test options</summary>
+                  <div className="scenario-options">
                     <label className="field">
-                      Test scenario
+                      Tipo de entrega
                       <select
                         value={scenario}
                         onChange={(event) => setScenario(event.target.value as typeof scenario)}
                       >
-                        <option value="normal">Successful delivery</option>
-                        <option value="permanent_failure">Receiver rejects · recovery test</option>
+                        <option value="normal">Entrega correcta</option>
+                        <option value="permanent_failure">Fallo controlado · probar recuperación</option>
                       </select>
                     </label>
-                  </details>
+                  </div>
                   <button
                     className="button button-primary send-button"
                     disabled={busy}
                     onClick={() => void sendEvent()}
                   >
-                    {busy ? 'Sending…' : 'Send event'} <span aria-hidden="true">→</span>
+                    {busy ? 'Enviando…' : 'Enviar evento'} <span aria-hidden="true">→</span>
                   </button>
                 </div>
+                <p className="scenario-hint">
+                  {scenario === 'normal'
+                    ? 'El receptor aceptará el pedido en condiciones normales.'
+                    : 'El receptor rechazará este evento de forma controlada. Después podrás restaurarlo y reenviarlo en Recuperación.'}
+                </p>
                 <div className="secure-note">
-                  <span aria-hidden="true">◇</span> Synthetic data only · HMAC signature verified · No
-                  external destinations
+                  <span aria-hidden="true">◇</span> Solo datos ficticios · Verificación de firma HMAC · Sin destinos externos
                 </div>
               </section>
               <EventTable
                 events={events.slice(0, 5)}
                 onOpen={openDetail}
-                title="Recent events"
-                empty="No events received yet. Send a test event to see the real delivery flow."
+                title="Últimos eventos"
+                empty="Creá tu primer pedido de prueba para ver cómo se procesa y entrega."
                 action={() => setTab('Events')}
               />
             </>
@@ -547,29 +640,29 @@ function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">INGRESS</div>
-                  <h1>Events</h1>
-                  <p>Inspect accepted payloads and the delivery state derived from storage.</p>
+                  <div className="eyebrow">REGISTRO DE ENTRADA</div>
+                  <h1>Eventos</h1>
+                  <p>Cada evento es un aviso recibido por el sistema. Consultá su contenido y el estado de entrega.</p>
                 </div>
-                <button className="button button-primary" onClick={() => void sendEvent()}>
-                  ＋ Send test event
+                <button className="button button-primary" onClick={openSendForm}>
+                  ＋ Crear evento de prueba
                 </button>
               </div>
               <div className="filter-row">
                 <label className="search-box">
                   <span aria-hidden="true">⌕</span>
                   <input
-                    aria-label="Search events"
+                    aria-label="Buscar eventos"
                     value={search}
                     onChange={(event) => {
                       setSearch(event.target.value);
                       setOffset(0);
                     }}
-                    placeholder="Search order or event ID"
+                    placeholder="Buscar pedido o identificador"
                   />
                 </label>
                 <label className="filter-select">
-                  <span className="sr-only">Filter by status</span>
+                  <span className="sr-only">Filtrar por estado</span>
                   <select
                     value={statusFilter}
                     onChange={(event) => {
@@ -577,15 +670,15 @@ function App() {
                       setOffset(0);
                     }}
                   >
-                    <option value="">All statuses</option>
-                    <option value="SUCCEEDED">Delivered</option>
-                    <option value="PENDING">Pending retry</option>
-                    <option value="LEASED">Processing</option>
-                    <option value="DEAD">Failed</option>
+                    <option value="">Todos los estados</option>
+                    <option value="SUCCEEDED">Entregado</option>
+                    <option value="PENDING">En espera</option>
+                    <option value="LEASED">En proceso</option>
+                    <option value="DEAD">Fallido</option>
                   </select>
                 </label>
                 <label className="date-filter">
-                  From{' '}
+                  Desde{' '}
                   <input
                     type="date"
                     value={fromDate}
@@ -596,7 +689,7 @@ function App() {
                   />
                 </label>
                 <label className="date-filter">
-                  To{' '}
+                  Hasta{' '}
                   <input
                     type="date"
                     value={toDate}
@@ -615,21 +708,21 @@ function App() {
                       setOffset(0);
                     }}
                   >
-                    Clear dates
+                    Limpiar fechas
                   </button>
                 )}
               </div>
               <EventTable
                 events={events}
                 onOpen={openDetail}
-                title="All events"
-                empty="No events match these filters."
+                title="Todos los eventos"
+                empty="No hay eventos que coincidan con estos filtros."
               />
-              <div className="pagination" aria-label="Event pages">
+              <div className="pagination" aria-label="Páginas de eventos">
                 <span>
                   {eventTotal
-                    ? `Showing ${offset + 1}–${Math.min(offset + events.length, eventTotal)} of ${eventTotal}`
-                    : 'No matching events'}
+                    ? `Mostrando ${offset + 1}–${Math.min(offset + events.length, eventTotal)} de ${eventTotal}`
+                    : 'Sin coincidencias'}
                 </span>
                 <div>
                   <button
@@ -637,14 +730,14 @@ function App() {
                     disabled={offset === 0}
                     onClick={() => setOffset(Math.max(0, offset - 25))}
                   >
-                    Previous
+                    Anterior
                   </button>
                   <button
                     className="button button-quiet"
                     disabled={offset + 25 >= eventTotal}
                     onClick={() => setOffset(offset + 25)}
                   >
-                    Next
+                    Siguiente
                   </button>
                 </div>
               </div>
@@ -655,9 +748,9 @@ function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">DELIVERY WORKER</div>
-                  <h1>Deliveries</h1>
-                  <p>Each row is a durable job. Open an event to inspect its recorded attempts.</p>
+                  <div className="eyebrow">SEGUIMIENTO</div>
+                  <h1>Entregas</h1>
+                  <p>Seguí el envío de cada aviso al receptor. Abrí un pedido para revisar todos sus intentos.</p>
                 </div>
               </div>
               <DeliveryTable deliveries={deliveries} onOpen={openDetail} />
@@ -668,15 +761,28 @@ function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">DEAD LETTER QUEUE</div>
-                  <h1>Recovery</h1>
-                  <p>Restore the controlled receiver, then replay a failed delivery with a reason.</p>
+                  <div className="eyebrow">GESTIÓN DE FALLOS</div>
+                  <h1>Recuperación</h1>
+                  <p>Revisá las entregas fallidas, restaurá el receptor y volvé a intentar el envío.</p>
                 </div>
+              </div>
+              <div className="section-guide">
+                <strong>¿Cómo se recupera una entrega?</strong>
+                <p>Elegí una entrega fallida, indicá el motivo y restaurá el receptor antes de reenviar. El sistema conserva los intentos anteriores.</p>
+                <button
+                  className="text-button"
+                  onClick={() => {
+                    setScenario('permanent_failure');
+                    openSendForm();
+                  }}
+                >
+                  Probar un fallo controlado →
+                </button>
               </div>
               {recovery.length === 0 ? (
                 <EmptyState
-                  title="Nothing needs recovery"
-                  body="When a real delivery exhausts its retry budget, it will appear here."
+                  title="No hay entregas por recuperar"
+                  body="Cuando una entrega quede en estado fallido, aparecerá acá."
                 />
               ) : (
                 <div className="recovery-list">
@@ -684,26 +790,26 @@ function App() {
                     <article className="panel recovery-card" key={job.id}>
                       <div className="recovery-title">
                         <div>
-                          <div className="eyebrow">ORDER {job.order_id}</div>
-                          <h2>Delivery failed</h2>
+                          <div className="eyebrow">PEDIDO</div>
+                          <h2>{orderLabel(job.order_id)}</h2>
                         </div>
                         <Badge state="DEAD" />
                       </div>
                       <div className="recovery-meta">
                         <span>
-                          Event <code>{job.event_id}</code>
+                          Referencia: <code>{job.order_id}</code>
                         </span>
-                        <span>{job.total_attempts} attempts</span>
-                        <span>{job.last_error_class ?? 'Unknown error'}</span>
+                        <span>{attemptCount(job.total_attempts)}</span>
+                        <span>{errorLabel(job.last_error_class)}</span>
                       </div>
                       <label className="field">
-                        Replay reason
+                        Motivo de la recuperación
                         <textarea
                           value={replayReason[job.id] ?? ''}
                           onChange={(event) =>
                             setReplayReason({ ...replayReason, [job.id]: event.target.value })
                           }
-                          placeholder="Explain what was restored before replay"
+                          placeholder="Ej.: Se restauró el receptor de pedidos"
                           maxLength={256}
                           minLength={4}
                         />
@@ -714,7 +820,7 @@ function App() {
                           disabled={busy || (replayReason[job.id] ?? '').trim().length < 4}
                           onClick={() => void restoreAndReplay(job)}
                         >
-                          Restore receiver and replay
+                          Restaurar y reenviar
                         </button>
                         <button
                           className="text-button"
@@ -722,7 +828,7 @@ function App() {
                             void openDetail(job.event_id);
                           }}
                         >
-                          Inspect event
+                          Ver detalle
                         </button>
                       </div>
                     </article>
@@ -736,38 +842,38 @@ function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">CONTROLLED DESTINATION</div>
-                  <h1>Endpoints</h1>
+                  <div className="eyebrow">DESTINO DE LOS EVENTOS</div>
+                  <h1>Receptor</h1>
                   <p>
-                    One fixed synthetic Orders receiver. Destinations cannot be changed from this workspace.
+                    El receptor recibe los avisos de pedidos. En esta demo el destino es interno y no se puede cambiar.
                   </p>
                 </div>
                 <button className="button button-primary" onClick={openSendForm}>
-                  ＋ Send test event
+                  ＋ Crear evento de prueba
                 </button>
               </div>
               <section className="panel endpoint-card">
                 <div className="endpoint-icon">⇢</div>
                 <div className="endpoint-info">
                   <div className="endpoint-title">
-                    <h2>Orders receiver</h2>
+                    <h2>Receptor de pedidos</h2>
                     <span
                       className={`badge ${receiverReady === true ? 'badge-succeeded' : receiverReady === false ? 'badge-dead' : 'badge-pending'}`}
                     >
                       <span className="badge-dot" />
                       {receiverReady === true
-                        ? 'Healthy'
+                        ? 'Disponible'
                         : receiverReady === false
-                          ? 'Unavailable'
-                          : 'Checking'}
+                          ? 'No disponible'
+                          : 'Comprobando'}
                     </span>
                   </div>
-                  <p>Internal HTTP receiver · loopback only · authenticated worker delivery</p>
+                  <p>Servicio interno que recibe los eventos enviados por el sistema.</p>
                   <div className="endpoint-detail">
-                    <span>Event type</span>
-                    <code>order.created</code>
-                    <span>Transport</span>
-                    <code>HTTP / fixed route</code>
+                    <span>Evento admitido</span>
+                    <span>Pedido creado <code>(order.created)</code></span>
+                    <span>Comunicación</span>
+                    <code>HTTP · ruta fija</code>
                   </div>
                 </div>
               </section>
@@ -778,16 +884,16 @@ function App() {
             <>
               <div className="page-heading">
                 <div>
-                  <div className="eyebrow">AUDIT TRAIL</div>
-                  <h1>Activity</h1>
-                  <p>Chronological view of persisted events and delivery attempts.</p>
+                  <div className="eyebrow">HISTORIAL</div>
+                  <h1>Actividad</h1>
+                  <p>Historial de eventos recibidos, intentos de entrega y recuperaciones guardadas.</p>
                 </div>
               </div>
               <section className="panel activity-list">
                 {activity.length === 0 ? (
                   <EmptyState
-                    title="No activity yet"
-                    body="Accepted events and their stored delivery attempts will appear here."
+                    title="Todavía no hay actividad"
+                    body="Los eventos y sus intentos aparecerán acá cuando envíes un pedido de prueba."
                   />
                 ) : (
                   activity.map((item, index) => (
@@ -810,9 +916,9 @@ function App() {
                               : '!'}
                       </span>
                       <span className="activity-copy">
-                        <strong>{item.order_id}</strong>
+                        <strong>{activityLabel(item.action, item.detail)}</strong>
                         <small>
-                          {item.action.replaceAll('_', ' ')} · {item.detail}
+                          {orderLabel(item.order_id)} · Ref. {item.order_id}
                           {item.http_status ? ` · HTTP ${item.http_status}` : ''}
                           {item.latency_ms === null ? '' : ` · ${item.latency_ms} ms`}
                         </small>
@@ -826,7 +932,7 @@ function App() {
           )}
           <footer className="page-footer">
             <span>Webhook Recovery Lab</span>
-            <span>Temporary workspace · Synthetic Orders data</span>
+            <span>Espacio temporal · Pedidos ficticios</span>
           </footer>
         </main>
       </div>
@@ -836,6 +942,8 @@ function App() {
           onClose={closeDetail}
           onDuplicate={() => void duplicateEvent(detail.event_id)}
           busy={busy}
+          notice={notice}
+          error={error}
         />
       )}
     </div>
@@ -861,7 +969,7 @@ function Stat({
         <span>{label}</span>
         <span className={`stat-icon ${tone}`}>{icon}</span>
       </div>
-      <strong>{value.toLocaleString()}</strong>
+      <strong>{value.toLocaleString('es-AR')}</strong>
       <small>{foot}</small>
     </article>
   );
@@ -888,48 +996,48 @@ function EventTable({
         <h2>{title}</h2>
         {action && (
           <button className="text-button" onClick={action}>
-            View all <span aria-hidden="true">→</span>
+            Ver todos <span aria-hidden="true">→</span>
           </button>
         )}
       </div>
       {events.length === 0 ? (
-        <EmptyState title="No events yet" body={empty} />
+        <EmptyState title="Todavía sin eventos" body={empty} />
       ) : (
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Order</th>
-                <th>Event</th>
-                <th>Status</th>
-                <th>Received</th>
-                <th>{showAttempts ? 'Attempts' : 'Delivery'}</th>
+                <th>Pedido</th>
+                <th>Tipo de evento</th>
+                <th>Estado</th>
+                <th>Recibido</th>
+                <th>{showAttempts ? 'Intentos' : 'Entrega'}</th>
               </tr>
             </thead>
             <tbody>
               {events.map((event) => (
                 <tr key={event.id}>
-                  <td data-label="Order">
+                  <td data-label="Pedido">
                     <button className="row-link" onClick={() => onOpen(event)}>
-                      {event.payload.data.order_id}
+                      {orderLabel(event.payload.data.order_id)}
                     </button>
-                    <small>{event.event_id.slice(0, 8)}…</small>
+                    <small className="order-reference">Ref. {event.payload.data.order_id}</small>
                   </td>
-                  <td data-label="Event">
-                    <span className="event-type">{event.event_type}</span>
+                  <td data-label="Tipo de evento">
+                    <span className="event-type">{eventLabel(event.event_type)}</span>
                   </td>
-                  <td data-label="Status">
+                  <td data-label="Estado">
                     <Badge state={event.status} />
                   </td>
-                  <td data-label="Received">{dateTime(event.received_at)}</td>
-                  <td data-label={showAttempts ? 'Attempts' : 'Delivery'}>
+                  <td data-label="Recibido">{dateTime(event.received_at)}</td>
+                  <td data-label={showAttempts ? 'Intentos' : 'Entrega'}>
                     {showAttempts
                       ? event.total_attempts
                       : event.status === 'PENDING'
                         ? dateTime(event.next_attempt_at)
                         : event.total_attempts
-                          ? `${event.total_attempts} ${event.total_attempts === 1 ? 'attempt' : 'attempts'}`
-                          : 'Queued'}
+                          ? attemptCount(event.total_attempts)
+                          : 'En cola'}
                   </td>
                 </tr>
               ))}
@@ -951,46 +1059,46 @@ function DeliveryTable({
   return (
     <section className="panel table-panel">
       <div className="panel-heading">
-        <h2>Delivery jobs</h2>
+        <h2>Envíos al receptor</h2>
       </div>
       {deliveries.length === 0 ? (
-        <EmptyState title="No deliveries yet" body="Delivery jobs appear after an event is accepted." />
+        <EmptyState title="Todavía no hay entregas" body="Envíos al receptor appear after an event is accepted." />
       ) : (
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
-                <th>Order</th>
-                <th>Delivery ID</th>
-                <th>Status</th>
-                <th>Last response</th>
-                <th>Attempts</th>
+                <th>Pedido</th>
+                <th>Destino</th>
+                <th>Estado</th>
+                <th>Última respuesta</th>
+                <th>Intentos</th>
               </tr>
             </thead>
             <tbody>
               {deliveries.map((delivery) => (
                 <tr key={delivery.job_id}>
-                  <td data-label="Order">
+                  <td data-label="Pedido">
                     <button className="row-link" onClick={() => onOpen(delivery.event_id)}>
-                      {delivery.order_id}
+                      {orderLabel(delivery.order_id)}
                     </button>
-                    <small>{delivery.event_id.slice(0, 8)}…</small>
+                    <small className="order-reference">Ref. {delivery.order_id}</small>
                   </td>
-                  <td data-label="Delivery ID">
-                    <code className="event-type">{delivery.delivery_id.slice(0, 8)}…</code>
+                  <td data-label="Destino">
+                    <span className="event-type">Receptor de pedidos</span>
                   </td>
-                  <td data-label="Status">
+                  <td data-label="Estado">
                     <Badge state={delivery.status} />
                   </td>
-                  <td data-label="Last response">
+                  <td data-label="Última respuesta">
                     {delivery.latest_http_status
-                      ? `HTTP ${delivery.latest_http_status}`
+                      ? httpLabel(delivery.latest_http_status)
                       : delivery.status === 'PENDING'
                         ? dateTime(delivery.next_attempt_at)
-                        : 'No attempt yet'}
-                    {delivery.latest_error_class && <small>{delivery.latest_error_class}</small>}
+                        : 'Todavía sin intentos'}
+                    {delivery.latest_error_class && <small>{errorLabel(delivery.latest_error_class)}</small>}
                   </td>
-                  <td data-label="Attempts">{delivery.total_attempts}</td>
+                  <td data-label="Intentos">{delivery.total_attempts}</td>
                 </tr>
               ))}
             </tbody>
@@ -1018,11 +1126,15 @@ function EventDialog({
   onClose,
   onDuplicate,
   busy,
+  notice,
+  error,
 }: {
   event: EventDetail;
   onClose: () => void;
   onDuplicate: () => void;
   busy: boolean;
+  notice: string;
+  error: string;
 }) {
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -1030,9 +1142,9 @@ function EventDialog({
     const focusables = () =>
       Array.from(
         dialog?.querySelectorAll<HTMLElement>(
-          'button, a[href], input, textarea, select, [tabindex]:not([tabindex="-1"])',
+          'button:not(:disabled), a[href], input, textarea, select, summary, [tabindex]:not([tabindex="-1"])',
         ) ?? [],
-      );
+      ).filter((element) => element.getClientRects().length > 0);
     focusables()[0]?.focus();
     const closeOnEscape = (keyboard: KeyboardEvent) => {
       if (keyboard.key === 'Escape') onClose();
@@ -1063,19 +1175,20 @@ function EventDialog({
       <section className="event-dialog" role="dialog" aria-modal="true" aria-labelledby="event-dialog-title">
         <div className="dialog-heading">
           <div>
-            <div className="eyebrow">EVENT DETAIL</div>
-            <h2 id="event-dialog-title">{event.payload.data.order_id}</h2>
+            <div className="eyebrow">DETALLE DEL EVENTO</div>
+            <h2 id="event-dialog-title">{orderLabel(event.payload.data.order_id)}</h2>
+            <p className="order-reference">Referencia: {event.payload.data.order_id}</p>
           </div>
-          <button className="icon-button" onClick={onClose} aria-label="Close event details">
+          <button className="icon-button" onClick={onClose} aria-label="Cerrar detalle del evento">
             ×
           </button>
         </div>
         <div className="detail-summary">
           <Badge state={event.status} />
           <span className={event.signature_verified ? 'signature-ok' : 'signature-unknown'}>
-            {event.signature_verified ? 'Signature accepted' : 'Signature unknown'}
+            {event.signature_verified ? 'Firma verificada' : 'Firma sin verificar'}
           </span>
-          <span>{event.event_type}</span>
+          <span>{eventLabel(event.event_type)}</span>
           <time>{dateTime(event.received_at)}</time>
         </div>
         <button
@@ -1083,38 +1196,42 @@ function EventDialog({
           disabled={busy || !event.signature_verified}
           onClick={onDuplicate}
         >
-          Send identical payload again
+          Reenviar el mismo evento
         </button>
-        <div className="detail-block">
-          <h3>Event identity</h3>
+        <p className="scenario-hint">Comprobá que enviar los mismos datos no genere otra entrega. El sistema detecta duplicados.</p>
+        {notice && <p className="notice notice-success" role="status">{notice}</p>}
+        {error && <p className="notice notice-error" role="alert">{userFacingError(error)}</p>}
+        <details className="detail-block technical-details">
+          <summary>Datos técnicos e identificadores</summary>
+          <h3>Identificador del evento</h3>
           <code className="copy-code">{event.event_id}</code>
-          <h3>Delivery ID</h3>
+          <h3>Identificador de entrega</h3>
           <code className="copy-code">{event.delivery_id}</code>
-        </div>
-        <div className="detail-block">
-          <h3>Sanitized payload</h3>
+          <h3>Datos del evento (JSON)</h3>
           <pre>{JSON.stringify(event.payload, null, 2)}</pre>
-        </div>
+          <h3>Resultados técnicos de los intentos</h3>
+          <pre>{JSON.stringify(event.attempts, null, 2)}</pre>
+        </details>
         <div className="detail-block">
           <h3>
-            Delivery attempts <span className="count-chip">{event.attempts.length}</span>
+            Intentos de entrega <span className="count-chip">{event.attempts.length}</span>
           </h3>
           {event.attempts.length === 0 ? (
-            <p className="muted">No attempt has started yet.</p>
+            <p className="muted">Todavía no comenzó ningún intento.</p>
           ) : (
             <ol className="attempt-list">
               {event.attempts.map((attempt) => (
                 <li key={attempt.attempt_sequence}>
                   <div>
-                    <strong>Attempt {attempt.attempt_sequence}</strong>
+                    <strong>Intento {attempt.attempt_sequence}</strong>
                     <small>
-                      {dateTime(attempt.started_at)} · Generation {attempt.replay_generation}
+                      {dateTime(attempt.started_at)} · Ciclo {attempt.replay_generation + 1}
                     </small>
                   </div>
-                  <span>{attempt.http_status ?? attempt.result}</span>
+                  <span>{attempt.http_status ? httpLabel(attempt.http_status) : attemptLabel(attempt.result)}</span>
                   <small>
                     {attempt.latency_ms === null ? '—' : `${attempt.latency_ms} ms`} ·{' '}
-                    {attempt.error_class ?? attempt.result}
+                    {attempt.error_class ? errorLabel(attempt.error_class) : attemptLabel(attempt.result)}
                   </small>
                 </li>
               ))}
