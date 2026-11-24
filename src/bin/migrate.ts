@@ -11,9 +11,7 @@ try {
   const applied = await applyMigrations(pool, 8071133, gatewayMigrations);
   for (const version of gatewayMigrations) {
     process.stdout.write(
-      applied.includes(version)
-        ? `Applied migration ${version}\n`
-        : `Migration ${version} already applied\n`,
+      applied.includes(version) ? `Applied migration ${version}\n` : `Migration ${version} already applied\n`,
     );
   }
 } finally {

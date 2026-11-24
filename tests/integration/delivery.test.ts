@@ -20,7 +20,7 @@ const receiver = buildReceiverApp({
   store: new PostgresReceiverStore(receiverDb),
   sharedToken: 'integration-receiver-local-token-only-00001',
 });
-const tracked: Array<{ inboxId: string; jobId: string; deliveryId: string }> = [];
+const tracked: Array<{ inboxId: string; jobId: string; deliveryId: string; workspaceId?: string }> = [];
 let transport: HttpDeliveryTransport;
 
 const success: DeliveryOutcome = { kind: 'success', httpStatus: 200, latencyMs: 1, errorClass: null };
@@ -69,7 +69,7 @@ afterAll(async () => {
   await receiverDb.end();
 });
 
-async function createJob(orderId: string) {
+async function createJob(orderId: string, workspaceId?: string) {
   const inboxId = randomUUID();
   const jobId = randomUUID();
   const eventId = randomUUID();
@@ -81,16 +81,16 @@ async function createJob(orderId: string) {
     data: { order_id: orderId },
   };
   await db.query(
-    `INSERT INTO inbox_events (id,provider,event_id,event_type,occurred_at,payload_sha256,payload)
-      VALUES ($1,'sandbox',$2,'order.created',$3,$4,$5::jsonb)`,
-    [inboxId, eventId, payload.occurred_at, '0'.repeat(64), JSON.stringify(payload)],
+    `INSERT INTO inbox_events (id,workspace_id,provider,event_id,event_type,occurred_at,payload_sha256,payload)
+      VALUES ($1,$2,'sandbox',$3,'order.created',$4,$5,$6::jsonb)`,
+    [inboxId, workspaceId ?? null, eventId, payload.occurred_at, '0'.repeat(64), JSON.stringify(payload)],
   );
   await db.query(
     `INSERT INTO delivery_jobs (id,inbox_event_id,delivery_id,status,next_attempt_at)
       VALUES ($1,$2,$3,'PENDING',clock_timestamp())`,
     [jobId, inboxId, deliveryId],
   );
-  tracked.push({ inboxId, jobId, deliveryId });
+  tracked.push({ inboxId, jobId, deliveryId, ...(workspaceId ? { workspaceId } : {}) });
   return { inboxId, jobId, eventId, deliveryId };
 }
 
@@ -140,6 +140,23 @@ describe('worker recovery using two real PostgreSQL databases', () => {
       [created.jobId],
     );
     expect(attempts.rows.map((r) => r.result)).toEqual(['RETRY', 'RETRY', 'SUCCEEDED']);
+  });
+
+  it('carries trusted workspace identity into the separate receiver receipt', async () => {
+    const workspaceId = randomUUID();
+    await db.query(
+      `INSERT INTO guest_workspaces (id,token_sha256,created_at,expires_at)
+        VALUES ($1,$2,clock_timestamp(),clock_timestamp() + INTERVAL '24 hours')`,
+      [workspaceId, workspaceId.replaceAll('-', '').padEnd(64, '0')],
+    );
+    const created = await createJob('ord_scoped_receiver', workspaceId);
+    const runner = new WorkerRunner({ store, transport });
+    expect(await runner.runOnce()).toBe(true);
+    const receipt = await receiverDb.query<{ workspace_id: string; event_id: string }>(
+      'SELECT workspace_id::text, event_id::text FROM receiver_receipts WHERE delivery_id = $1',
+      [created.deliveryId],
+    );
+    expect(receipt.rows[0]).toEqual({ workspace_id: workspaceId, event_id: created.eventId });
   });
 
   it('persists exponential backoff and does not claim a retry before it is due', async () => {

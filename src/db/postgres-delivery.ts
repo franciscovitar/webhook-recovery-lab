@@ -16,6 +16,7 @@ interface CandidateRow {
   attempts_in_generation: number;
   replay_generation: number;
   delivery_id: string;
+  workspace_id: string | null;
   event_id: string;
   payload: unknown;
 }
@@ -31,6 +32,18 @@ export class PostgresDeliveryStore implements DeliveryStore {
     await this.pool.query('SELECT 1');
   }
 
+  async nextWorkDelayMs(): Promise<number | null> {
+    const result = await this.pool.query<{ delay_ms: number | null }>(
+      `SELECT GREATEST(0, floor(EXTRACT(EPOCH FROM (min(due_at) - clock_timestamp())) * 1000))::int AS delay_ms
+         FROM (
+           SELECT next_attempt_at AS due_at FROM delivery_jobs WHERE status = 'PENDING'
+           UNION ALL
+           SELECT lease_until AS due_at FROM delivery_jobs WHERE status = 'LEASED'
+         ) due`,
+    );
+    return result.rows[0]?.delay_ms ?? null;
+  }
+
   /** One short transaction claims a due/expired job; HTTP happens after COMMIT. */
   async claimNext(): Promise<ClaimedJob | null> {
     const client = await this.pool.connect();
@@ -38,7 +51,7 @@ export class PostgresDeliveryStore implements DeliveryStore {
       await client.query('BEGIN');
       const candidates = await client.query<CandidateRow>(
         `SELECT j.id, j.status, j.lease_token, j.total_attempts,
-                j.attempts_in_generation, j.replay_generation, j.delivery_id,
+                j.attempts_in_generation, j.replay_generation, j.delivery_id, e.workspace_id,
                 e.event_id, e.payload
            FROM delivery_jobs j JOIN inbox_events e ON e.id = j.inbox_event_id
           WHERE (j.status = 'PENDING' AND j.next_attempt_at <= clock_timestamp())
@@ -96,6 +109,7 @@ export class PostgresDeliveryStore implements DeliveryStore {
 
       return {
         jobId: row.id,
+        ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
         deliveryId: row.delivery_id,
         eventId: row.event_id,
         leaseToken,
@@ -173,25 +187,51 @@ export class PostgresDeliveryStore implements DeliveryStore {
   }
 
   /** Explicit operator action; historical attempts remain intact. */
-  async replayDead(jobId: string, reason: string): Promise<number> {
+  async replayDead(jobId: string, reason: string, workspaceId?: string, requestId?: string): Promise<number> {
     if (reason.trim().length < 4 || reason.length > 256) {
       throw new Error('replay reason must contain 4..256 characters');
     }
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      if (workspaceId && requestId) {
+        await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
+          `${workspaceId}:${requestId}`,
+        ]);
+        const priorAction = await client.query<{ job_id: string; new_generation: number }>(
+          `SELECT job_id, new_generation FROM replay_audit
+            WHERE workspace_id = $1 AND request_id = $2`,
+          [workspaceId, requestId],
+        );
+        if (priorAction.rows[0]) {
+          if (priorAction.rows[0].job_id !== jobId) {
+            await client.query('ROLLBACK');
+            throw new Error('replay request ID was already used for another job');
+          }
+          await client.query('COMMIT');
+          return priorAction.rows[0].new_generation;
+        }
+      }
       const selected = await client.query<{
         status: string;
         replay_generation: number;
         total_attempts: number;
-      }>('SELECT status, replay_generation, total_attempts FROM delivery_jobs WHERE id = $1 FOR UPDATE', [
-        jobId,
-      ]);
+      }>(
+        `SELECT j.status, j.replay_generation, j.total_attempts
+           FROM delivery_jobs j JOIN inbox_events e ON e.id = j.inbox_event_id
+          WHERE j.id = $1 AND ($2::uuid IS NULL OR e.workspace_id = $2)
+          FOR UPDATE OF j`,
+        [jobId, workspaceId ?? null],
+      );
       if (!selected.rows[0] || selected.rows[0].status !== 'DEAD') {
         await client.query('ROLLBACK');
         throw new Error('Only existing DEAD jobs can be manually replayed');
       }
       const nextGeneration = selected.rows[0].replay_generation + 1;
+      if (nextGeneration > 2) {
+        await client.query('ROLLBACK');
+        throw new Error('manual replay limit reached');
+      }
       await client.query(
         `UPDATE delivery_jobs SET status = 'PENDING', attempts_in_generation = 0,
                 replay_generation = $2, next_attempt_at = clock_timestamp(),
@@ -201,9 +241,17 @@ export class PostgresDeliveryStore implements DeliveryStore {
       );
       await client.query(
         `INSERT INTO replay_audit
-           (id, job_id, reason, previous_total_attempts, new_generation)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [randomUUID(), jobId, reason.trim(), selected.rows[0].total_attempts, nextGeneration],
+           (id, job_id, workspace_id, request_id, reason, previous_total_attempts, new_generation)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          randomUUID(),
+          jobId,
+          workspaceId ?? null,
+          requestId ?? null,
+          reason.trim(),
+          selected.rows[0].total_attempts,
+          nextGeneration,
+        ],
       );
       await client.query('COMMIT');
       return nextGeneration;

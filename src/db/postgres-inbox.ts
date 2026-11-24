@@ -19,22 +19,39 @@ export class PostgresInboxRepository implements InboxRepository {
       transactionOpen = true;
 
       const inboxId = randomUUID();
-      const inserted = await connection.query<{ id: string }>(
-        `INSERT INTO inbox_events
-           (id, provider, event_id, event_type, occurred_at, payload_sha256, payload)
-         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-         ON CONFLICT (provider, event_id) DO NOTHING
-         RETURNING id`,
-        [
-          inboxId,
-          incoming.provider,
-          incoming.event.event_id,
-          incoming.event.type,
-          incoming.event.occurred_at,
-          incoming.payloadSha256,
-          incoming.rawBody.toString('utf8'),
-        ],
-      );
+      const parameters = [
+        inboxId,
+        incoming.provider,
+        incoming.event.event_id,
+        incoming.event.type,
+        incoming.event.occurred_at,
+        incoming.payloadSha256,
+        incoming.rawBody.toString('utf8'),
+      ];
+      const inserted = incoming.workspaceId
+        ? await (async () => {
+            await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))', [
+              incoming.workspaceId,
+            ]);
+            return connection.query<{ id: string }>(
+              `INSERT INTO inbox_events
+               (id, workspace_id, provider, event_id, event_type, occurred_at, payload_sha256, payload)
+             SELECT $1, $8, $2, $3, $4, $5, $6, $7::jsonb
+               FROM (SELECT count(*) AS count FROM inbox_events WHERE workspace_id = $8) AS existing
+              WHERE existing.count < 10
+             ON CONFLICT (workspace_id, provider, event_id) WHERE workspace_id IS NOT NULL DO NOTHING
+             RETURNING id`,
+              [...parameters, incoming.workspaceId],
+            );
+          })()
+        : await connection.query<{ id: string }>(
+            `INSERT INTO inbox_events
+               (id, provider, event_id, event_type, occurred_at, payload_sha256, payload)
+             VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+             ON CONFLICT (provider, event_id) WHERE workspace_id IS NULL DO NOTHING
+             RETURNING id`,
+            parameters,
+          );
 
       let outcome: IngestDecision;
       if (inserted.rows.length === 1) {
@@ -42,18 +59,25 @@ export class PostgresInboxRepository implements InboxRepository {
           `INSERT INTO delivery_jobs
              (id, inbox_event_id, delivery_id, status, next_attempt_at)
            VALUES ($1, $2, $3, 'PENDING', clock_timestamp())`,
-          [randomUUID(), inboxId, randomUUID()],
+          [randomUUID(), inboxId, incoming.deliveryId ?? randomUUID()],
         );
         outcome = 'accepted';
       } else {
         // A conflicting INSERT waits for its contender's transaction. Once it
         // resolves, its committed payload hash is the deduplication oracle.
-        const existing = await connection.query<{ payload_sha256: string }>(
-          `SELECT payload_sha256 FROM inbox_events WHERE provider = $1 AND event_id = $2`,
-          [incoming.provider, incoming.event.event_id],
-        );
-        if (!existing.rows[0]) throw new Error('inbox conflict row was not visible');
-        outcome = existing.rows[0].payload_sha256 === incoming.payloadSha256 ? 'duplicate' : 'conflict';
+        const existing = incoming.workspaceId
+          ? await connection.query<{ payload_sha256: string }>(
+              `SELECT payload_sha256 FROM inbox_events
+                WHERE workspace_id = $1 AND provider = $2 AND event_id = $3`,
+              [incoming.workspaceId, incoming.provider, incoming.event.event_id],
+            )
+          : await connection.query<{ payload_sha256: string }>(
+              `SELECT payload_sha256 FROM inbox_events
+                WHERE workspace_id IS NULL AND provider = $1 AND event_id = $2`,
+              [incoming.provider, incoming.event.event_id],
+            );
+        if (!existing.rows[0]) outcome = 'capacity';
+        else outcome = existing.rows[0].payload_sha256 === incoming.payloadSha256 ? 'duplicate' : 'conflict';
       }
 
       await connection.query('COMMIT');

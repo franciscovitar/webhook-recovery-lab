@@ -1,9 +1,13 @@
 import type { SandboxEvent } from './event.js';
 
-export type IngestDecision = 'accepted' | 'duplicate' | 'conflict';
+export type IngestDecision = 'accepted' | 'duplicate' | 'conflict' | 'capacity';
 
 export interface IncomingWebhook {
   provider: 'sandbox';
+  /** Omitted only by the legacy local laboratory ingress. */
+  workspaceId?: string;
+  /** Assigned before receiver scenario preparation so inbox + job commit together. */
+  deliveryId?: string;
   event: SandboxEvent;
   rawBody: Buffer;
   payloadSha256: string;

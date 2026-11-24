@@ -34,6 +34,7 @@ export class HttpDeliveryTransport implements DeliveryTransport {
     try {
       const response = await fetch(this.endpoint, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${this.options.sharedToken}`,
@@ -41,6 +42,7 @@ export class HttpDeliveryTransport implements DeliveryTransport {
         },
         body: JSON.stringify({
           delivery_id: job.deliveryId,
+          workspace_id: job.workspaceId ?? null,
           event_id: job.eventId,
           order_id: job.event.data.order_id,
         }),

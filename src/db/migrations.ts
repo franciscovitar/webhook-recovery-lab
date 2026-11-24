@@ -3,8 +3,17 @@ import { resolve } from 'node:path';
 
 import type { Pool } from 'pg';
 
-export const gatewayMigrations = ['0001_initial', '0002_guest_workspaces'] as const;
-export const receiverMigrations = ['0001_receiver'] as const;
+export const gatewayMigrations = [
+  '0001_initial',
+  '0002_guest_workspaces',
+  '0003_scope_events_to_workspaces',
+  '0004_workspace_replay_idempotency',
+] as const;
+export const receiverMigrations = [
+  '0001_receiver',
+  '0002_receiver_workspace_identity',
+  '0003_receiver_workspace_fault_plans',
+] as const;
 
 // Explicit manifests keep the two databases independent.
 export async function applyMigrations(

@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const receiverDeliverySchema = z
   .object({
     delivery_id: z.uuid(),
+    workspace_id: z.uuid().nullable().optional(),
     event_id: z.uuid(),
     order_id: z
       .string()
@@ -23,4 +24,6 @@ export interface ReceiverResult {
 export interface ReceiverStore {
   receive(delivery: ReceiverDelivery): Promise<ReceiverResult>;
   ping(): Promise<void>;
+  preparePermanentFailure?(deliveryId: string, workspaceId: string): Promise<void>;
+  restoreFaultPlan?(deliveryId: string, workspaceId: string): Promise<boolean>;
 }

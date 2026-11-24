@@ -2,6 +2,7 @@ import type { SandboxEvent } from './event.js';
 
 export interface ClaimedJob {
   jobId: string;
+  workspaceId?: string;
   eventId: string;
   deliveryId: string;
   leaseToken: string;
@@ -25,7 +26,8 @@ export interface DeliveryStore {
   claimNext(): Promise<ClaimedJob | null>;
   finish(job: ClaimedJob, outcome: DeliveryOutcome, retryDelayMs: number): Promise<boolean>;
   ping(): Promise<void>;
-  replayDead(jobId: string, reason: string): Promise<number>;
+  replayDead(jobId: string, reason: string, workspaceId?: string, requestId?: string): Promise<number>;
+  nextWorkDelayMs?(): Promise<number | null>;
 }
 
 export interface DeliveryTransport {

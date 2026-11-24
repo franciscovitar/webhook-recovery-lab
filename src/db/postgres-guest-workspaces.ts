@@ -11,8 +11,7 @@ export interface GuestWorkspace {
 }
 
 export type GuestAdmission =
-  | { status: 'created'; workspace: GuestWorkspace; token: string }
-  | { status: 'capacity' };
+  { status: 'created'; workspace: GuestWorkspace; token: string } | { status: 'capacity' };
 
 export class PostgresGuestWorkspaceStore {
   constructor(private readonly pool: Pool) {}

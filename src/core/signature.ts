@@ -45,3 +45,7 @@ export function verifySignature({
 export function sha256Hex(data: Buffer): string {
   return createHash('sha256').update(data).digest('hex');
 }
+
+export function signPayload(rawBody: Buffer, timestamp: string, secret: string): string {
+  return `sha256=${createHmac('sha256', secret).update(timestamp).update('.').update(rawBody).digest('hex')}`;
+}

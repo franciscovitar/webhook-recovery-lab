@@ -1,19 +1,37 @@
+import { randomUUID } from 'node:crypto';
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { guestTokenDigest, newGuestToken } from '../../src/core/guest-session.js';
 import { applyMigrations, gatewayMigrations } from '../../src/db/migrations.js';
 import { createPool } from '../../src/db/pool.js';
 import { PostgresGuestWorkspaceStore } from '../../src/db/postgres-guest-workspaces.js';
+import { PostgresInboxRepository } from '../../src/db/postgres-inbox.js';
+import { sha256Hex } from '../../src/core/signature.js';
+import { parseSandboxEvent } from '../../src/core/event.js';
 import { requireTestDatabaseUrl } from './test-urls.js';
 
 const pool = createPool(requireTestDatabaseUrl('TEST_DATABASE_URL', 'gateway_test'));
 const store = new PostgresGuestWorkspaceStore(pool);
+const inbox = new PostgresInboxRepository(pool);
 
 beforeAll(async () => {
   await applyMigrations(pool, 8071133, gatewayMigrations);
 });
 beforeEach(async () => {
   // Only the new table in the explicitly guarded disposable test database.
+  await pool.query(
+    `DELETE FROM replay_audit r USING delivery_jobs j, inbox_events e
+      WHERE r.job_id = j.id AND j.inbox_event_id = e.id AND e.workspace_id IS NOT NULL`,
+  );
+  await pool.query(
+    `DELETE FROM delivery_attempts a USING delivery_jobs j, inbox_events e
+      WHERE a.job_id = j.id AND j.inbox_event_id = e.id AND e.workspace_id IS NOT NULL`,
+  );
+  await pool.query(
+    `DELETE FROM delivery_jobs WHERE inbox_event_id IN
+       (SELECT id FROM inbox_events WHERE workspace_id IS NOT NULL)`,
+  );
   await pool.query('DELETE FROM guest_workspaces');
 });
 afterAll(async () => {
@@ -70,5 +88,80 @@ describe('guest workspace persistence', () => {
        FROM generate_series(1, 30) i`,
     );
     expect(await store.create()).toEqual({ status: 'capacity' });
+  });
+
+  it('allows identical provider event IDs in separate workspaces and scopes dedupe', async () => {
+    const first = await store.create();
+    const second = await store.create();
+    if (first.status !== 'created' || second.status !== 'created') throw new Error('Admission failed');
+    const event = {
+      event_id: 'f1961c82-e6f2-47d4-9df4-17ab231fd752',
+      type: 'order.created',
+      occurred_at: '2026-11-24T10:00:00Z',
+      data: { order_id: 'ord_isolation' },
+    };
+    const rawBody = Buffer.from(JSON.stringify(event));
+    const parsed = parseSandboxEvent(rawBody);
+    if (!parsed) throw new Error('Invalid synthetic event fixture');
+    const incoming = {
+      provider: 'sandbox' as const,
+      event: parsed,
+      rawBody,
+      payloadSha256: sha256Hex(rawBody),
+    };
+    expect(await inbox.accept({ ...incoming, workspaceId: first.workspace.id })).toBe('accepted');
+    expect(await inbox.accept({ ...incoming, workspaceId: first.workspace.id })).toBe('duplicate');
+    expect(await inbox.accept({ ...incoming, workspaceId: second.workspace.id })).toBe('accepted');
+    const rows = await pool.query<{ workspace_id: string; count: string }>(
+      `SELECT workspace_id::text, count(*)::text AS count FROM inbox_events
+        WHERE event_id = $1 GROUP BY workspace_id ORDER BY workspace_id`,
+      [event.event_id],
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.map((row) => row.count)).toEqual(['1', '1']);
+    await pool.query(
+      `DELETE FROM delivery_jobs WHERE inbox_event_id IN
+         (SELECT id FROM inbox_events WHERE event_id = $1)`,
+      [event.event_id],
+    );
+    await pool.query('DELETE FROM inbox_events WHERE event_id = $1', [event.event_id]);
+  });
+
+  it('caps each workspace at ten persisted events', async () => {
+    const admitted = await store.create();
+    if (admitted.status !== 'created') throw new Error('Admission failed');
+    const outcomes = [];
+    for (let index = 0; index < 11; index++) {
+      const event = {
+        event_id: randomUUID(),
+        type: 'order.created',
+        occurred_at: '2026-11-24T10:00:00Z',
+        data: { order_id: `ord_limit_${index}` },
+      };
+      const rawBody = Buffer.from(JSON.stringify(event));
+      const parsed = parseSandboxEvent(rawBody);
+      if (!parsed) throw new Error('Invalid synthetic event fixture');
+      outcomes.push(
+        await inbox.accept({
+          provider: 'sandbox',
+          workspaceId: admitted.workspace.id,
+          event: parsed,
+          rawBody,
+          payloadSha256: sha256Hex(rawBody),
+        }),
+      );
+    }
+    expect(outcomes.filter((outcome) => outcome === 'accepted')).toHaveLength(10);
+    expect(outcomes.filter((outcome) => outcome === 'capacity')).toHaveLength(1);
+    const count = await pool.query<{ count: string }>(
+      'SELECT count(*)::text AS count FROM inbox_events WHERE workspace_id = $1',
+      [admitted.workspace.id],
+    );
+    expect(count.rows[0]?.count).toBe('10');
+    await pool.query(
+      'DELETE FROM delivery_jobs WHERE inbox_event_id IN (SELECT id FROM inbox_events WHERE workspace_id = $1)',
+      [admitted.workspace.id],
+    );
+    await pool.query('DELETE FROM guest_workspaces WHERE id = $1', [admitted.workspace.id]);
   });
 });

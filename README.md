@@ -1,6 +1,6 @@
 # Webhook Recovery Lab
 
-> **Product direction (24 Nov 2026):** evolve the existing engine into a real, no-login, isolated synthetic **Webhook Operations Console** with a single-service hosting candidate and US$0 additional budget. See [current V3 architecture and UX](docs/PRODUCT_ARCHITECTURE_V3.md). The browser-only showcase remains technical evidence. V3 is design only; hosting preflight and implementation remain pending.
+> **Product direction (24 Nov 2026):** a no-login, isolated synthetic **Webhook Operations Console** built on the existing Fastify/PostgreSQL engine. The V3 local implementation now includes guest sessions, workspace-scoped reads and dedupe, signed synthetic ingress, a supervised delivery worker, controlled receiver failures, restore/replay, and a React/Vite interface. It is locally verified only; no hosting, public release, or deployment is claimed. See [V3 architecture](docs/PRODUCT_ARCHITECTURE_V3.md) and [implementation checkpoint](docs/IMPLEMENTATION_V3_CHECKPOINT.md).
 
 <p><strong>Status: V1 implementation merged into main; verified in local and hosted CI checkpoints — not production software.</strong></p>
 
@@ -22,9 +22,26 @@ Architecture and planned fault scenarios: [PAS design review #668](https://githu
 
 **Subsequent hosted checkpoints:** [CI #44534829515](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44534829515) verified the multi-service Compose smoke after real PostgreSQL test suites; [CI #44538366466](https://github.com/franciscovitar/webhook-recovery-lab/actions/runs/44538366466) is another successful PR run. These are historical branch-linked CI observations, not production experience or automatic proof of future changes.
 
-## Public interactive console
+## V3 local functional console
 
-The independent `showcase/` folder demonstrates signed ingress, duplicates, worker crash after receiver commit, lease recovery, bounded retry and replay through a synthetic JavaScript state model. It is intended for public hosting on Vercel, **not** for hosting the Fastify/PostgreSQL/worker backend. No real HMAC verification, network request, Postgres process or API is run from the browser. Run its tests via `cd showcase && npm test`. The underlying repository stays private unless its owner explicitly changes visibility.
+The same-origin application serves a real React/Vite operations UI from Fastify. A visitor can start a temporary browser-cookie workspace, send a synthetic signed order event through the actual HMAC ingress, follow the persisted delivery attempt, and exercise the controlled receiver rejection, restore, and audited replay path. Workspace event queries, recovery actions, receiver receipts, and replay audits are scoped to the server-validated guest session. The legacy CLI and multi-process Compose setup remain available.
+
+To run it locally, first start the existing PostgreSQL service and install the lockfile dependencies. Set `DATABASE_URL`, `RECEIVER_DATABASE_URL`, `WEBHOOK_SIGNING_KEY_ID`, `WEBHOOK_SIGNING_SECRET` and `INTERNAL_DELIVERY_TOKEN` in `.env`; use only synthetic local secrets. Then apply the additive migrations and build/start the combined service:
+
+```bash
+docker compose up -d db
+npm ci
+npm run migrate
+npm run migrate:receiver
+npm run build
+npm start
+```
+
+The API serves the UI at `http://localhost:3000`. For frontend iteration, run `npm run dev:web` in another terminal and `npm run dev` for the API. Local mode uses non-Secure cookies; public mode requires `WRL_PUBLIC_DEMO=true` and an HTTPS `PUBLIC_BASE_URL`, and disables the legacy unscoped webhook route. Do not expose local secrets or use the test databases as application storage.
+
+## Preserved client-side showcase
+
+The independent `showcase/` folder remains unchanged. It demonstrates signed ingress, duplicates, worker crash after receiver commit, lease recovery, bounded retry and replay through a synthetic JavaScript state model. No real HMAC verification, network request, Postgres process or API is run there. Run its tests via `cd showcase && npm test`. The underlying repository stays private unless its owner explicitly changes visibility.
 
 ## Local setup
 

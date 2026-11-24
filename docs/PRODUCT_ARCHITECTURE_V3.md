@@ -1,7 +1,7 @@
 # Webhook Recovery — functional public portfolio V3
 
-**Owner-approved direction; DESIGN_ONLY, not implemented.** 2026-11-24, Argentina.
-Baseline repository main: cc99a57e3ef848d679d798932efd52d294a04990. PAS main: b14e7cf58c416572c54b0592e755d870b0dc889b; portfolio policy blob 1fe6af3e74e10f7c15adf50d8b11ac1067e1bd82. Apply Deep Research Standard, portfolio delivery policy, cost guardrail and execution policy. V3 supersedes V2's login requirement and enterprise deployment scope; V2 remains historical rationale. Preserve local Compose, tests, static showcase and engineering case study. Execution authority: NONE for code implementation, provisioning, database writes, changing visibility or deploying at this checkpoint.
+**Owner-approved product and technical direction.** 2026-11-24, Argentina.
+Baseline repository main: cc99a57e3ef848d679d798932efd52d294a04990. PAS main: b14e7cf58c416572c54b0592e755d870b0dc889b; portfolio policy blob 1fe6af3e74e10f7c15adf50d8b11ac1067e1bd82. Apply Deep Research Standard, portfolio delivery policy, cost guardrail and execution policy. V3 supersedes V2's login requirement and enterprise deployment scope; V2 remains historical rationale. Preserve local Compose, tests, static showcase and engineering case study. Local implementation and disposable-database QA are authorized. No provisioning, repository visibility change, main merge or deployment is authorized.
 
 ## Product and finite scope
 
@@ -17,7 +17,7 @@ Reuse WorkerRunner.runOnce and existing claim/finish logic. Wake on startup, acc
 
 ## Isolation, persistence and safety
 
-Add ordered migrations without rewriting applied 0001; current migration runners hardcode single version and must be extended under advisory lock. Guest credential random opaque server token (digest at rest), HttpOnly/Secure in HTTPS/SameSite cookie, expiry, Origin/CSRF checks on mutation. Scope every read and mutation from validated session, never client-supplied owner. Scope event uniqueness to workspace/provider/event ID preserving legacy behavior, constrain joins and indexes for jobs, attempts and replay. Trusted internal worker may claim across workspaces. Receiver records map to trusted workspace/delivery identity; no cross-DB FK or distributed transaction claim. Strict synthetic schema/body limit; no signing keys, internal tokens or raw secrets in UI/logs. Public mode cannot expose local-default signing/admin routes.
+Add ordered migrations without rewriting applied 0001; the gateway and receiver runners use explicit version manifests under advisory lock. Guest credential random opaque server token (digest at rest), HttpOnly/Secure in HTTPS/SameSite cookie, expiry, Origin/CSRF checks on mutation. Scope every read and mutation from validated session, never client-supplied owner. Scope event uniqueness to workspace/provider/event ID preserving legacy behavior, constrain joins and indexes for jobs, attempts and replay. Trusted internal worker may claim across workspaces. Receiver records map to trusted workspace/delivery identity; no cross-DB FK or distributed transaction claim. Strict synthetic schema/body limit; no signing keys, internal tokens or raw secrets in UI/logs. Public mode cannot expose local-default signing/admin routes.
 
 Server creates signed raw event bytes and submits through actual HMAC ingress. Stable per-workspace command idempotency and exact raw bytes on repeat. For fault scenarios preallocate delivery identity and prepare receiver plan BEFORE job eligible; idempotent preparation/acceptance, reconcile partial failures and clean orphans. Never insert fault after claim or fabricate failure. 202 only after gateway commit; identical event dedupes, changed payload conflicts. Replay locks scoped DEAD job, preserves stable delivery ID and historical attempts, bounded reason/generation and action idempotency. Restore receiver independently, idempotently; report partial restore/replay failure truthfully (no distributed transaction). Lost ACK must retain one receiver effect.
 
@@ -30,13 +30,14 @@ Same origin /api/demo: POST session (resume/create); GET overview, events (searc
 ## UX
 
 Dark navy sidebar #142335; light canvas #F4F6F9; white surfaces; teal #16836C; status colors with labels/icons (not color alone). Active navigation and breadcrumbs, desktop tables/mobile cards, keyboard focus and accessible drawers, loading/empty/error/expired states. Human-friendly names and order references, full UUID copyable in detail. No decorative animation or fake charts. Main navigation:
+
 - Overview: scoped Received / Delivered / Pending retry / Failed counts, outcome distribution, recent activity and direct Send test event CTA.
 - Events: search, status/date filters, event detail, sanitized payload, signature acceptance, identity and timeline.
 - Endpoints: one real fixed Orders receiver, observed health, discreet test-event action. No fake configurable integrations.
 - Deliveries: attempt history, HTTP code, latency, actual outcome, next retry and event links.
 - Recovery: DEAD list, readable error, restore controlled receiver then replay with reason/confirmation; show processing until actual result.
 - Activity: chronological records derived from persisted events/attempts/audit.
-Landing CTA enters sandbox directly without account; explain cold start concisely, bounded safe-read retries only, never require manual API wake or silently repeat mutations.
+  Landing CTA enters sandbox directly without account; explain cold start concisely, bounded safe-read retries only, never require manual API wake or silently repeat mutations.
 
 ## Hosting preflight — conditional, not authorized
 
@@ -47,6 +48,7 @@ Preferred candidate: one Render Free service + existing Aiven Free PostgreSQL, t
 Fallback: if sharing Aiven unsafe, evaluate a separate project on personal Neon Free ONLY with explicit approval and verification of actual plan/quota/no charge; published Free limits have changed since prior incident. Never use managed Launch. Supabase new project not viable with existing active slots, Render Postgres Free expires after 30 days. Vercel functions and Cloudflare Queues require material runtime/semantics changes and potential complexity/cost; not selected. Full local Docker product is truthful fallback if no safe US$0 hosting. Do not pay to eliminate routine cold start.
 
 Sources verified 2026-11-24:
+
 - https://render.com/docs/free
 - https://render.com/docs/deploy-rails-6-7
 - https://aiven.io/docs/products/postgresql/concepts/pg-free-tier
@@ -64,6 +66,6 @@ A: repository-aware local Codex/Work, run baseline on disposable gateway_test/re
 
 Acceptance: original unit/integration/Compose checks, migration rerun, real signed 202+commit/duplicate/conflict/invalid signature, actual receiver success/503 retry/permanent failure/restored replay, lost ACK/expired lease/stale ACK, concurrent quotas and replay idempotency, separate guest cookies and cross-space GET/POST denial, expired session, fixed destination/redirect denial, CSRF and cleanup safe for active job, real scoped metrics, desktop/mobile keyboard and active nav, anonymous browser entry after real idle, resume after interrupted worker, verified free-plan spend and no unrelated changes. Historical tests are not new-product evidence. Stop when core journey passes; no billing, enterprise RBAC, arbitrary connectors, alerts, permanent polling or multi-server hosting.
 
-## Checkpoint
+## Implementation status
 
-Read actual baseline README, V2, schemas, ingress, worker, receiver, migrations, pools, security/observability. Direction approved, hosting conditional. Aiven account headroom and isolation, Render actual quota/billing remain open; no tests executed or code/database/hosting changes in this design checkpoint. Next: authorized local implementation against disposable DBs, and read-only hosting preflight via authenticated account browser before any separate provisioning/publication approval. This document is current design handoff, not evidence of implementation.
+This file defines the intended product and acceptance boundary. The local implementation and evidence completed so far are tracked in [IMPLEMENTATION_V3_CHECKPOINT.md](IMPLEMENTATION_V3_CHECKPOINT.md). Hosting remains conditional and unverified; local completion does not claim a public or production service.
