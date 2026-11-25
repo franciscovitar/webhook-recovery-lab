@@ -2,7 +2,7 @@
 
 **A functional webhook operations console for synthetic orders.**
 
-[Open the live app](https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com) · [Engineering case study](https://franciscovitar.vercel.app/work/webhook-recovery-lab)
+[Open the live app](https://webhook-recovery-lab-v3-qa-franv-20261124.onrender.com) · [Engineering case study](https://franvitar.genovasite.com/work/webhook-recovery-lab)
 
 Send a signed test event, inspect its delivery, deliberately reject a delivery, restore the receiver and replay it. No account is needed. The Spanish-language interface uses real HTTP processing and PostgreSQL persistence, not an in-memory simulation.
 
